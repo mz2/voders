@@ -115,6 +115,7 @@ def create_datasets(
     device: str,
     dataset_name: str = TRAIN_DATASET_NAME,
     data_path: Optional[str] = None,
+    augmentor=None,
 ):
     registry = get_dataset_registry()
     dataset_meta = registry[dataset_name]
@@ -123,6 +124,8 @@ def create_datasets(
     dataset_kwargs = {}
     if data_path is not None:
         dataset_kwargs["path"] = data_path
+    if augmentor is not None:
+        dataset_kwargs["augmentor"] = augmentor
     return dataset_meta["class"](
         groups=groups,
         sequence_length=sequence_length,
@@ -219,6 +222,86 @@ def main():
         type=int,
         default=2,
         help="Number of batches prefetched by each data loading worker",
+    )
+
+    augment_group = parser.add_argument_group("Dynamic Augmentation")
+    augment_group.add_argument(
+        "--augment",
+        action="store_true",
+        help=(
+            "Augment the clean train renders on the fly (reverb/codec/mix) instead of using "
+            "pre-baked variants. Forces the train loader to num_workers=0 so torchcrepe "
+            "validation runs on the GPU in the main process (no fork-after-CUDA deadlock)."
+        ),
+    )
+    augment_group.add_argument(
+        "--augment-config",
+        type=str,
+        default=None,
+        help="Run-config YAML to source augmentation_profiles from (default: built-in profiles)",
+    )
+    augment_group.add_argument(
+        "--augment-validate",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Gate each augmented sample with the alignment validator (resample until valid)",
+    )
+    augment_group.add_argument(
+        "--augment-f0-method",
+        type=str,
+        default="crepe_f0",
+        choices=["crepe_f0", "pyin_f0", "auto"],
+        help="f0 estimator for inline validation (crepe_f0 = torchcrepe on GPU)",
+    )
+    augment_group.add_argument(
+        "--augment-f0-device",
+        type=str,
+        default="auto",
+        help="Device for crepe_f0 validation (auto | cuda | xpu | dml | cpu)",
+    )
+    augment_group.add_argument(
+        "--augment-f0-model",
+        type=str,
+        default="tiny",
+        choices=["tiny", "full"],
+        help="CREPE capacity for validation: tiny (~5-10x faster, for gating) | full (accurate)",
+    )
+    augment_group.add_argument(
+        "--augment-f0-decoder",
+        type=str,
+        default="argmax",
+        choices=["argmax", "viterbi"],
+        help="CREPE decoder for validation: argmax (~15x faster, for gating) | viterbi (smooth)",
+    )
+    augment_group.add_argument(
+        "--augment-max-retries",
+        type=int,
+        default=4,
+        help="Max augmentation proposals to try per sample before falling back to clean audio",
+    )
+    augment_group.add_argument(
+        "--augment-prob",
+        type=float,
+        default=1.0,
+        help="Probability a given sample is augmented (1.0 = always)",
+    )
+    augment_group.add_argument(
+        "--augment-pitch-shift-semitones",
+        type=float,
+        default=0.0,
+        help=(
+            "Max |semitones| for label-transforming pitch shift (0 = off); each sample draws an "
+            "integer in [-n, n] and the labels are transposed to match"
+        ),
+    )
+    augment_group.add_argument(
+        "--augment-time-stretch",
+        type=float,
+        default=0.0,
+        help=(
+            "Label-transforming time-stretch amount (0 = off); rate drawn from [1-a, 1+a] and the "
+            "label note times are scaled to match"
+        ),
     )
 
     train_group = parser.add_argument_group("Training Configuration")
@@ -442,6 +525,45 @@ def main():
     print("=" * 70)
     print()
 
+    augmentor = None
+    if args.augment:
+        from .dataloading.augmentation import (
+            DynamicAugmentor,
+            default_profiles,
+            profiles_from_config,
+        )
+
+        profiles = (
+            profiles_from_config(args.augment_config)
+            if args.augment_config
+            else default_profiles()
+        )
+        augmentor = DynamicAugmentor(
+            profiles,
+            validate=args.augment_validate,
+            f0_method=args.augment_f0_method,
+            f0_device=args.augment_f0_device,
+            f0_model=args.augment_f0_model,
+            f0_decoder=args.augment_f0_decoder,
+            pitch_shift_semitones=args.augment_pitch_shift_semitones,
+            time_stretch_amount=args.augment_time_stretch,
+            max_retries=args.augment_max_retries,
+            augment_prob=args.augment_prob,
+            seed=args.seed,
+        )
+        worker_note = (
+            "train loader forced to num_workers=0 (GPU validation runs in the main process)"
+            if augmentor.requires_main_process
+            else f"train loader keeps num_workers={args.num_workers} (CPU-only augmentation)"
+        )
+        print(
+            f"Dynamic augmentation ON: {len(profiles)} profiles "
+            f"({', '.join(augmentor.profile_ids)}); "
+            f"validate={args.augment_validate} ({args.augment_f0_method}), "
+            f"retries={args.augment_max_retries}, prob={args.augment_prob}. "
+            f"{worker_note}."
+        )
+
     print("Loading training dataset...")
     train_dataset = create_datasets(
         groups=args.train_groups,
@@ -450,6 +572,7 @@ def main():
         device="cpu",
         dataset_name=args.train_dataset,
         data_path=args.train_path,
+        augmentor=augmentor,
     )
     print(f"Training dataset: {len(train_dataset)} samples")
 
@@ -463,20 +586,31 @@ def main():
     )
     print(f"Validation dataset: {len(val_dataset)} samples")
 
-    loader_worker_kwargs = {}
-    if args.num_workers > 0:
-        loader_worker_kwargs = {
-            "prefetch_factor": args.prefetch_factor,
-            "persistent_workers": True,
-        }
+    def _worker_kwargs(num_workers):
+        if num_workers > 0:
+            return {
+                "prefetch_factor": args.prefetch_factor,
+                "persistent_workers": True,
+            }
+        return {}
+
+    # When augmentation validates with torchcrepe on the GPU inside __getitem__, the train
+    # loader must run in the main process (num_workers=0) — forking workers after CUDA init is
+    # the deadlock fixed in #24. CPU-only augmentation (no validation, or pyin) is fork-safe
+    # and keeps its workers. Validation/test loaders carry no augmentor.
+    train_num_workers = (
+        0
+        if (augmentor is not None and augmentor.requires_main_process)
+        else args.num_workers
+    )
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=args.num_workers,
+        num_workers=train_num_workers,
         pin_memory=args.accelerator == "gpu",
-        **loader_worker_kwargs,
+        **_worker_kwargs(train_num_workers),
     )
     val_loader = DataLoader(
         val_dataset,
@@ -484,7 +618,7 @@ def main():
         shuffle=False,
         num_workers=args.num_workers,
         pin_memory=args.accelerator == "gpu",
-        **loader_worker_kwargs,
+        **_worker_kwargs(args.num_workers),
     )
     print(f"\nTrain batches: {len(train_loader)}")
     print(f"Validation batches: {len(val_loader)}")
