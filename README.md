@@ -70,6 +70,7 @@ byte-identical to the lyric-free pipeline. Add a `lyrics` block to a run config 
 lyrics:
   source: automatic     # vowel (default) | supplied | automatic | generated
   inventory: en_cv      # automatic-source style: en_cv | scat
+  g2p_backend: espeak   # espeak (CPU rules, default) | neural (byte-level T5 on GPU)
 ```
 
 - **vowel** — default, lyric-free (open vowel).
@@ -77,22 +78,29 @@ lyrics:
 - **automatic** — a seeded, CPU, dependency-free syllable sampler. `inventory: en_cv` for neutral
   consonant–vowel syllables, or **`inventory: scat`** for jazz **scat-singing** syllables
   (Scatman-style "ski-ba-bop-ba-dop-bop"). Deterministic from the master seed, reproducible.
-- **generated** — optional, opt-in themed lyrics from an out-of-process model, pinned as a cached
-  artifact so replays never re-invoke the model; an unverified model license is refused.
+- **generated** — themed lyrics from a real instruct **LLM** (default `Qwen2.5-0.5B-Instruct`,
+  Apache-2.0) run on GPU, segmented to one syllable per note and pinned as a cached artifact so
+  replays never re-invoke the model; an unverified model license is refused.
 
 Every source assigns **one syllable per note**. Only the **svs** lane articulates the syllables as
-phonemes; the deterministic and voice-conversion lanes are unchanged. Articulation uses
-grapheme-to-phoneme (G2P) via the optional `lyrics` extra and the espeak-ng system library:
+phonemes (vowel-specific formants + consonant bursts at the score-derived pitch); the deterministic
+and voice-conversion lanes are unchanged. Articulation needs grapheme-to-phoneme (G2P):
 
 ```bash
-sudo apt install espeak-ng
-uv sync --extra lyrics       # adds phonemizer (imported lazily; CPU baseline unaffected)
+sudo apt install espeak-ng        # CPU rule-based G2P (default)
+uv sync --extra lyrics            # phonemizer (lazy; CPU baseline unaffected)
+# Optional GPU upgrades:
+uv sync --extra lyrics --extra gpu --extra lyrics-gpu   # neural G2P + LLM generation on GPU
 ```
 
 ```bash
 just run config=evals/fixtures/lyrics-smoke.yaml   # automatic en_cv syllables (CPU)
 just run config=evals/fixtures/lyrics-scat.yaml    # scat-singing style
+just run config=evals/fixtures/lyrics-svs.yaml     # svs lane articulates the syllables (espeak G2P)
 ```
+
+GPU paths (real LLM generation, neural G2P) have opt-in tests: with the gpu extras synced, run
+`uv run pytest -m gpu`. The default suite stays CPU-only so the no-GPU baseline guarantees hold.
 
 ## Quickstart
 
