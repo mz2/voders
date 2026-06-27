@@ -192,17 +192,27 @@ class Validator:
             cents = _cents(meas.f0, f_ref)
             in_tune = meas.voiced & np.isfinite(cents) & (np.abs(cents) <= self.cfg.f0_cents)
 
-            # Onset/offset: first/last in-tune frame within a search window around the score time.
+            # Onset: a note's onset is a *rising edge* — an in-tune frame whose predecessor is not
+            # in-tune (a re-articulation or a pitch change). Keying on rising edges (not merely the
+            # first in-tune frame) is what distinguishes consecutive same-pitch notes: otherwise the
+            # previous note's still-in-tune audio inside the ±win window is mistaken for this onset.
+            # Pure legato with no re-articulation has no edge, so fall back to any in-tune frame.
             on_lo, on_hi = note.onset_s - win, note.onset_s + win
             off_lo, off_hi = note.offset_s - win, note.offset_s + win
-            on_idx = np.where(in_tune & (meas.times >= on_lo) & (meas.times <= on_hi))[0]
+            rising = np.zeros_like(in_tune)
+            rising[1:] = in_tune[1:] & ~in_tune[:-1]
+            in_on_win = (meas.times >= on_lo) & (meas.times <= on_hi)
+            on_idx = np.where(rising & in_on_win)[0]
+            if on_idx.size == 0:
+                on_idx = np.where(in_tune & in_on_win)[0]
             off_idx = np.where(in_tune & (meas.times >= off_lo) & (meas.times <= off_hi))[0]
 
             if on_idx.size == 0:
                 onset_ok = False
                 reasons.append(f"note {idx}: no in-tune onset detected")
             else:
-                dev = abs(float(meas.times[on_idx[0]]) - note.onset_s) * 1000.0
+                best = int(on_idx[np.argmin(np.abs(meas.times[on_idx] - note.onset_s))])
+                dev = abs(float(meas.times[best]) - note.onset_s) * 1000.0
                 max_onset_dev = max(max_onset_dev, dev)
                 if dev > self.cfg.onset_ms:
                     onset_ok = False

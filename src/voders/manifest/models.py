@@ -90,4 +90,8 @@ class ProvenanceRecord(BaseModel):
     score_aug_transform: str | None = None  # t+12 | hum0 | vol — the applied transform
     score_aug_seed: int | None = None  # the variant seed (reproducibility audit)
     dynamics_applied: bool = False  # did the lane honour a per-note gain (volume axis)
+    # External score-source provenance (issue #9). Empty for hand-built/generated scores; set from a
+    # score dir's `_source.json` sidecar for ingested corpora so each sample's license is auditable.
+    score_source: str = ""
+    score_license: str = ""
     notes: dict[str, object] = Field(default_factory=dict)

@@ -1,0 +1,38 @@
+# A large neural-SVS-with-lyrics batch combined with the score-domain augmentations from PR #13:
+# each generated multilingual lyric, sung by nnsvs voices, is fanned out by transpose / time-humanise
+# / per-note volume into many score variants (labels correct by construction). Packs to
+# datasets/lyrics_aug_pool/.
+run_id: lyrics_aug_pool
+master_seed: 20260629
+
+scores: evals/fixtures/scores/*.tsv
+output_root: out/lyrics_aug_pool
+
+voices:
+  - {voice_id: female, kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:female"}
+  - {voice_id: male,   kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:male"}
+  - {voice_id: tenor,  kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:tenor"}
+
+lanes:
+  svs: {enabled: true, backend: nnsvs, mode: force_score_f0}
+
+lyrics:
+  source: generated
+  theme: "love, longing, the sea, winter, light, home"
+  g2p_backend: espeak
+  languages: [en-us, de, fr-fr, es, it, ja]
+  model: {model_id: qwen2.5-0.5b-instruct, license: apache-2.0, license_ok: true, model_ref: Qwen/Qwen2.5-0.5B-Instruct}
+
+score_augmentation:
+  - profile_id: humanised
+    transpose:     {offsets: [-12, 12], policy: drop, window: [36, 84]}
+    humanize_time: {onset_sigma_s: 0.02, duration_sigma_s: 0.02, max_dev_s: 0.05, draws: 2}
+    volume:        {gain_db_range: [-6.0, 6.0], distribution: uniform}
+
+validator:
+  onset_ms: 50
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0

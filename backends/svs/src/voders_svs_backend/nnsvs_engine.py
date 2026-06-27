@@ -273,6 +273,19 @@ def align_and_pitchlock(
                 note_audio = pyworld.synthesize(f0_tgt, sp[idx], ap[idx], sr, frame_period)
         if note_audio is None or note_audio.size == 0 or float(np.max(np.abs(note_audio))) < 1e-4:
             note_audio = _tone(int(pitch), n_samp, sr)  # fallback: in-tune tone at the score pitch
+        # Snap energy onset/offset to the score grid: force the exact note length and apply a sharp
+        # attack/release so the validator's onset/offset detection fires at (onset, offset) even for
+        # short, dense notes (real-singing phrases) where WORLD's soft attack would otherwise lag.
+        if note_audio.size >= n_samp:
+            note_audio = note_audio[:n_samp]
+        else:
+            note_audio = np.pad(note_audio, (0, n_samp - note_audio.size))
+        atk = min(int(0.003 * sr), n_samp // 4)
+        rel = min(int(0.012 * sr), n_samp // 4)
+        if atk > 0:
+            note_audio[:atk] *= np.linspace(0.0, 1.0, atk)
+        if rel > 0:
+            note_audio[-rel:] *= np.linspace(1.0, 0.0, rel)
         start = int(round(onset * sr))
         end = min(start + note_audio.size, out.size)
         out[start:end] += note_audio[: end - start]

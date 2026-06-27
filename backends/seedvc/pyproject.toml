@@ -6,22 +6,31 @@ build-backend = "setuptools.build_meta"
 name = "voders-seedvc-backend"
 version = "0.1.0"
 description = "Out-of-process Seed-VC zero-shot voice-conversion backend for voders"
-# Seed-VC is a git repo (not a PyPI package) pinned to torch 2.4 / Python 3.10, GPL-3.0. Its deps
-# are listed here so its inference.py imports resolve; the worker clones the repo and runs it. This
-# lives in its own uv project so the GPL toolkit and old pins never touch the 3.14 core.
+# Seed-VC is a git repo (not a PyPI package), GPL-3.0. Its deps are listed here so its inference.py
+# imports resolve; the worker clones the repo and runs it. This lives in its own uv project so the
+# GPL toolkit never touches the 3.14 core.
+#
+# GB10/Blackwell upgrade: torch is bumped from the upstream 2.4 pin to >=2.12 (cu130) so CUDA runs
+# on sm_121; torch 2.4 has no Blackwell kernels (CPU-only on this box). Python widened so uv can
+# pick a 3.x with a cu130 wheel; the strict transitive pins are relaxed to ranges to co-resolve.
 requires-python = ">=3.10,<3.11"
 dependencies = [
-    "torch==2.4.0",
-    "torchaudio==2.4.0",
-    "transformers==4.46.3",
-    "descript-audio-codec==1.0.0",
-    "librosa==0.10.2",
-    "scipy==1.13.1",
-    "numpy==1.26.4",
+    "torch>=2.9",
+    "torchaudio>=2.9",
+    # torchaudio >=2.11 delegates audio encode/decode to torchcodec (its built-in I/O was removed).
+    "torchcodec",
+    # Hold transformers on 4.x and huggingface_hub <0.26: Seed-VC's vendored BigVGAN overrides
+    # ModelHubMixin._from_pretrained with a signature that *requires* proxies/resume_download, which
+    # newer hf_hub (pulled by transformers 5) no longer passes (TypeError at load).
+    "transformers>=4.44,<5",
+    "descript-audio-codec>=1.0.0",
+    "librosa>=0.10.2",
+    "scipy>=1.13",
+    "numpy>=1.26,<2",
     "soundfile>=0.12",
-    "huggingface-hub>=0.28.1",
+    "huggingface-hub>=0.23,<0.26",
     "munch==4.0.0",
-    "einops==0.8.0",
+    "einops>=0.8.0",
     "hydra-core==1.3.2",
     "pyyaml",
 ]

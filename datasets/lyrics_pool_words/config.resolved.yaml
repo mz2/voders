@@ -1,0 +1,69 @@
+augmentation_profiles: []
+lanes:
+  svs:
+    backend: nnsvs
+    enabled: true
+    mode: force_score_f0
+lyrics:
+  cache_dir: lyrics
+  g2p_backend: espeak
+  inventory: en_cv
+  languages:
+  - en-us
+  - de
+  - fr-fr
+  - es
+  - it
+  - ja
+  melisma: per_note
+  model:
+    license: apache-2.0
+    license_ok: true
+    model_id: qwen2.5-0.5b-instruct
+    model_ref: Qwen/Qwen2.5-0.5B-Instruct
+  source: generated
+  syllabifier: en_rule
+  theme: love, longing, the sea, winter, light
+master_seed: 20260628
+output_root: out/lyrics_pool_words
+reproduction:
+  deterministic: bit_exact
+  neural:
+    f0_cents: 25.0
+    onset_ms: 10.0
+    same_verdict: true
+run_id: lyrics_pool_words
+score_augmentation: []
+scores: evals/fixtures/scores/*.tsv
+validator:
+  f0_cents: 25.0
+  f0_coverage: 0.8
+  f0_device: auto
+  f0_method: pyin_f0
+  min_note_ms: null
+  min_note_percentile: 1.0
+  offset_fraction: 0.2
+  offset_min_ms: 50.0
+  onset_ms: 50.0
+  snr_floor_db: 0.0
+voices:
+- consent_verified: true
+  kind: svs_voicebank
+  license: CC0
+  model_ref: nnsvs:female
+  voice_id: female
+- consent_verified: true
+  kind: svs_voicebank
+  license: CC0
+  model_ref: nnsvs:male
+  voice_id: male
+- consent_verified: true
+  kind: svs_voicebank
+  license: CC0
+  model_ref: nnsvs:tenor
+  voice_id: tenor
+- consent_verified: true
+  kind: svs_voicebank
+  license: CC0
+  model_ref: nnsvs:soprano
+  voice_id: soprano
