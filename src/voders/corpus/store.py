@@ -50,12 +50,17 @@ class CorpusStore:
 
         Each sample gets its own directory ``shard=NNN/<sample_id>/`` with ``audio.wav`` and
         ``score.tsv`` — a flat per-sample layout downstream loaders can iterate as one dir per item.
+        A score-augmentation variant (``score_aug_axis`` set) is foldered under
+        ``<corpus|rejected>/augmented/<axis>/`` so variants never co-mingle with originals
+        (FR-016, SC-009); originals keep their plain ``corpus/``/``rejected/`` location.
         """
         base = (
             self.corpus_dir
             if record.verdict.status == VerdictStatus.ACCEPTED
             else self.rejected_dir
         )
+        if record.score_aug_axis:
+            base = base / "augmented" / record.score_aug_axis
         shard = self._shard_dir(base, index)
         sample_dir = shard / record.sample_id
         sample_dir.mkdir(parents=True, exist_ok=True)

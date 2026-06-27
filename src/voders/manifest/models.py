@@ -82,4 +82,12 @@ class ProvenanceRecord(BaseModel):
     lyric_multisyllable_supplied: int = 0
     lyric_language: str = "en-us"
     accompaniment: AccompanimentProvenance | None = None
+    # Score-domain augmentation lineage (feature 003). All default to "original/none", so a base
+    # record (or any feature-off run) serialises with these at their inert defaults (SC-001).
+    base_score_id: str | None = None  # the originating base score (None => this IS an original)
+    score_aug_profile: str | None = None  # ScoreAugmentationProfile id
+    score_aug_axis: str | None = None  # transpose | humanize | volume
+    score_aug_transform: str | None = None  # t+12 | hum0 | vol — the applied transform
+    score_aug_seed: int | None = None  # the variant seed (reproducibility audit)
+    dynamics_applied: bool = False  # did the lane honour a per-note gain (volume axis)
     notes: dict[str, object] = Field(default_factory=dict)

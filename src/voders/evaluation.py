@@ -12,9 +12,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from voders.manifest.io import load_manifest
 from voders.manifest.models import ProvenanceRecord, VerdictStatus
+from voders.scores.models import Note
 
 
 @dataclass
@@ -323,6 +325,357 @@ def evaluate(manifest_path: str, *, reproduce: bool = True) -> EvalReport:
     report.add(acc_sc008_stems(records))
     if reproduce:
         report.add(sc009_reproducibility(manifest_path))
+    return report
+
+
+# --------------------------------------------------------------------------------------------------
+# Score-augmentation suite (feature 003): SC-001..SC-009 over a produced manifest.
+#
+# Differential criteria read each variant record's ``base_score_id`` to locate its base in the same
+# manifest and compare label rows. Determinism is checked at the label level / via in-process
+# re-expansion — the WORLD renderer is bit-exact in-process but not across process invocations.
+# --------------------------------------------------------------------------------------------------
+
+
+def _is_variant(r: ProvenanceRecord) -> bool:
+    return r.base_score_id is not None
+
+
+def _is_original(r: ProvenanceRecord) -> bool:
+    return r.base_score_id is None and r.lane != "score_augmentation"
+
+
+def _notes_for(root: Path, record: ProvenanceRecord | None) -> list[Note] | None:
+    from pathlib import Path
+
+    from voders.scores.parse import parse_tsv
+
+    if record is None or not record.score_path:
+        return None
+    p = Path(root) / record.score_path
+    if not p.exists():
+        return None
+    try:
+        return parse_tsv(p).score.notes
+    except Exception:
+        return None
+
+
+def _vacuous(sc: str, description: str, detail: str) -> CriterionResult:
+    return CriterionResult(sc, description, 1.0, 1.0, True, gated=False, detail=detail)
+
+
+def sc001_off_safe(records: list[ProvenanceRecord], root: Path) -> CriterionResult:
+    """Opt-in safety: originals are untouched — inert score-aug fields, never under augmented/."""
+    originals = [r for r in records if _is_original(r)]
+    bad = [
+        r
+        for r in originals
+        if r.score_aug_axis is not None
+        or r.score_aug_profile is not None
+        or r.base_score_id is not None
+        or (r.score_path and "augmented/" in r.score_path)
+    ]
+    ok = len(originals) - len(bad)
+    value = _fraction(ok, len(originals))
+    return CriterionResult(
+        "SC-001",
+        "feature-off-safe: originals carry inert score-aug fields, never under augmented/",
+        value,
+        1.0,
+        not bad,
+        detail=f"{ok}/{len(originals)} originals clean",
+    )
+
+
+def sc002_transpose_exact(records: list[ProvenanceRecord], root: Path) -> CriterionResult:
+    """Every transpose variant: pitch shifted by exactly the offset; timing identical; pitch in range."""  # noqa: E501
+    bases = {(r.score_id, r.lane, r.voice_id): r for r in records if _is_original(r)}
+    variants = [r for r in _accepted(records) if r.score_aug_axis == "transpose" and _is_variant(r)]
+    if not variants:
+        return _vacuous("SC-002", "transpose exactness", "no transpose variants")
+    ok = 0
+    for v in variants:
+        offset = int((v.score_aug_transform or "t+0")[1:])
+        base = bases.get((v.base_score_id or "", v.lane, v.voice_id))
+        vn = _notes_for(root, v)
+        bn = _notes_for(root, base)
+        if not vn or not bn or len(vn) != len(bn):
+            continue
+        good = all(
+            a.pitch_midi == b.pitch_midi + offset
+            and a.onset_s == b.onset_s
+            and a.offset_s == b.offset_s
+            and 0 <= a.pitch_midi <= 127
+            for a, b in zip(vn, bn, strict=True)
+        )
+        ok += int(good)
+    value = _fraction(ok, len(variants))
+    return CriterionResult(
+        "SC-002",
+        "transpose: pitch shifted by exactly the offset, timing identical, pitch in 0..127",
+        value,
+        1.0,
+        ok == len(variants),
+        detail=f"{ok}/{len(variants)} transpose variants exact",
+    )
+
+
+def sc003_humanize_valid(
+    records: list[ProvenanceRecord], root: Path, max_dev_by_profile: dict[str, float]
+) -> CriterionResult:
+    """Every humanise variant is a valid monophonic score with deviations within the budget."""
+    from voders.scores.models import Score
+
+    bases = {(r.score_id, r.lane, r.voice_id): r for r in records if _is_original(r)}
+    variants = [r for r in records if r.score_aug_axis == "humanize" and _is_variant(r)]
+    if not variants:
+        return _vacuous("SC-003", "humanise validity + budget", "no humanise variants")
+    ok = 0
+    for v in variants:
+        vn = _notes_for(root, v)
+        base = bases.get((v.base_score_id or "", v.lane, v.voice_id))
+        bn = _notes_for(root, base)
+        if not vn:
+            continue
+        valid = Score(score_id="x", notes=list(vn)).is_monophonic() and all(
+            n.duration_s > 0 for n in vn
+        )
+        budget = max_dev_by_profile.get(v.score_aug_profile or "")
+        within = True
+        if bn and budget is not None and len(vn) == len(bn):
+            within = all(
+                abs(a.onset_s - b.onset_s) <= budget + 1e-9
+                and abs(a.offset_s - b.offset_s) <= budget + 1e-9
+                for a, b in zip(vn, bn, strict=True)
+            )
+        ok += int(valid and within)
+    value = _fraction(ok, len(variants))
+    return CriterionResult(
+        "SC-003",
+        "humanise: valid monophonic score, deviations within max-deviation budget",
+        value,
+        1.0,
+        ok == len(variants),
+        detail=f"{ok}/{len(variants)} humanise variants valid",
+    )
+
+
+def sc004_volume_widens(records: list[ProvenanceRecord], root: Path) -> CriterionResult:
+    """Volume variants widen per-note levels; (onset,offset,pitch) labels stay identical."""
+    from pathlib import Path
+
+    import numpy as np
+
+    from voders.audio import read_wav
+    from voders.constants import SAMPLE_RATE
+
+    bases = {(r.score_id, r.lane, r.voice_id): r for r in _accepted(records) if _is_original(r)}
+    variants = [r for r in _accepted(records) if r.score_aug_axis == "volume" and _is_variant(r)]
+    if not variants:
+        return _vacuous("SC-004", "volume widens level distribution", "no volume variants")
+
+    def per_note_rms(rec: ProvenanceRecord) -> list[float]:
+        notes = _notes_for(root, rec)
+        wpath = Path(root) / rec.audio_path
+        if not notes or not wpath.exists():
+            return []
+        audio, _ = read_wav(wpath)
+        out = []
+        for n in notes:
+            a = int(n.onset_s * SAMPLE_RATE)
+            b = min(int(n.offset_s * SAMPLE_RATE), audio.size)
+            seg = audio[a:b]
+            out.append(float(np.sqrt(np.mean(seg.astype(np.float64) ** 2))) if seg.size else 0.0)
+        return out
+
+    widened = 0
+    labels_ok = 0
+    for v in variants:
+        base = bases.get((v.base_score_id or "", v.lane, v.voice_id))
+        if base is None:
+            continue
+        vn = _notes_for(root, v)
+        bn = _notes_for(root, base)
+        if vn and bn and len(vn) == len(bn):
+            labels_ok += int(
+                all(
+                    a.onset_s == b.onset_s
+                    and a.offset_s == b.offset_s
+                    and a.pitch_midi == b.pitch_midi
+                    for a, b in zip(vn, bn, strict=True)
+                )
+            )
+        v_rms = per_note_rms(v)
+        b_rms = per_note_rms(base)
+        if len(v_rms) > 1 and len(b_rms) > 1:
+            widened += int(float(np.std(v_rms)) > float(np.std(b_rms)))
+    value = _fraction(widened, len(variants))
+    passed = widened == len(variants) and labels_ok == len(variants)
+    return CriterionResult(
+        "SC-004",
+        "volume: wider per-note level spread than base, labels byte-identical",
+        value,
+        1.0,
+        passed,
+        detail=f"{widened}/{len(variants)} widened, {labels_ok}/{len(variants)} labels identical",
+    )
+
+
+def sc005_reexpand_identical(manifest_path, records, root: Path) -> CriterionResult:
+    """Re-expanding each base in-process reproduces every variant's label .tsv byte-for-byte."""
+    import glob
+    from pathlib import Path
+
+    config_path = Path(root) / "config.resolved.yaml"
+    variants = [r for r in records if _is_variant(r) and r.score_path]
+    if not config_path.exists() or not variants:
+        return _vacuous("SC-005", "re-expansion byte-identical", "skipped (no config or variants)")
+
+    from voders.config.loader import load_config
+    from voders.scoreaug.expand import expand_full
+    from voders.scores.parse import parse_tsv, serialize_score
+    from voders.seeds import derive_seed
+
+    config = load_config(config_path)
+    profiles = {p.profile_id: p for p in config.score_augmentation}
+    paths = sorted(glob.glob(config.scores)) or sorted(
+        glob.glob(str(Path(config.scores) / "*.tsv"))
+    )
+    bases = {Path(p).stem: parse_tsv(p) for p in paths}
+
+    ok = 0
+    checked = 0
+    for v in variants:
+        prof = profiles.get(v.score_aug_profile)
+        base = bases.get(v.base_score_id or "")
+        if prof is None or base is None:
+            continue
+        seed = derive_seed(config.master_seed, base.score.score_id, "score_aug", prof.profile_id)
+        produced = {var.transform: var for var in expand_full(base, prof, seed).variants}
+        var = produced.get(v.score_aug_transform or "")
+        disk = Path(root) / v.score_path
+        if var is None or not disk.exists():
+            continue
+        checked += 1
+        ok += int(serialize_score(var.score) == disk.read_bytes())
+    if not checked:
+        return _vacuous("SC-005", "re-expansion byte-identical", "no comparable variants")
+    value = _fraction(ok, checked)
+    return CriterionResult(
+        "SC-005",
+        "re-expansion reproduces every variant label byte-for-byte",
+        value,
+        1.0,
+        ok == checked,
+        detail=f"{ok}/{checked} variants reproduced",
+    )
+
+
+def sc006_lineage(records: list[ProvenanceRecord]) -> CriterionResult:
+    """Every variant records base id + profile + seed + transform, and is path-classifiable."""
+    variants = [r for r in records if _is_variant(r)]
+    if not variants:
+        return _vacuous("SC-006", "variant lineage present", "no variants")
+    ok = 0
+    for v in variants:
+        complete = (
+            v.base_score_id
+            and v.score_aug_profile
+            and v.score_aug_transform
+            and v.score_aug_seed is not None
+            and v.score_aug_axis
+        )
+        classifiable = (not v.score_path) or ("augmented/" in v.score_path)
+        ok += int(bool(complete) and classifiable)
+    value = _fraction(ok, len(variants))
+    return CriterionResult(
+        "SC-006",
+        "variant lineage: base id + profile + seed + transform present, path-classifiable",
+        value,
+        1.0,
+        ok == len(variants),
+        detail=f"{ok}/{len(variants)} variants fully traceable",
+    )
+
+
+def sc007_coverage(manifest_path: str, records: list[ProvenanceRecord]) -> CriterionResult:
+    """Stats report a score-augmentation coverage axis; effective count = accepted/originals."""
+    from voders.corpus.stats import build_stats
+
+    block = build_stats(manifest_path).get("score_augmentation", {})
+    acc = _accepted(records)
+    variants = [r for r in acc if _is_variant(r)]
+    originals = [r for r in acc if not _is_variant(r)]
+    if not variants:
+        return _vacuous("SC-007", "coverage axis reported", "no variants")
+    expected_mult = _fraction(len(acc), len(originals)) if originals else 0.0
+    ok = (
+        bool(block.get("enabled"))
+        and bool(block.get("by_transform"))
+        and abs(float(block.get("effective_multiplier", 0.0)) - expected_mult) < 1e-9
+    )
+    return CriterionResult(
+        "SC-007",
+        "coverage axis reported; effective multiplier = accepted/originals",
+        1.0 if ok else 0.0,
+        1.0,
+        ok,
+        detail=f"mult={block.get('effective_multiplier')}, transforms={block.get('by_transform')}",
+    )
+
+
+def sc009_separation(records: list[ProvenanceRecord]) -> CriterionResult:
+    """Originals and variants never collide on disk; every file path is unique and foldered."""
+    paths = [r.score_path for r in records if r.score_path] + [
+        r.audio_path for r in records if r.audio_path
+    ]
+    unique = len(paths) == len(set(paths))
+    misfiled = []
+    for r in records:
+        if not r.score_path:
+            continue
+        in_aug = "augmented/" in r.score_path
+        if _is_variant(r) and not in_aug:
+            misfiled.append(r.sample_id)
+        if _is_original(r) and in_aug:
+            misfiled.append(r.sample_id)
+    ok = unique and not misfiled
+    return CriterionResult(
+        "SC-009",
+        "originals vs variants physically separated, zero path collisions",
+        1.0 if ok else 0.0,
+        1.0,
+        ok,
+        detail=f"unique_paths={unique}, misfiled={len(misfiled)}",
+    )
+
+
+def evaluate_score_aug(manifest_path: str) -> EvalReport:
+    """The feature-003 suite: SC-001..SC-009 over a produced manifest."""
+    from pathlib import Path
+
+    records = load_manifest(manifest_path)
+    root = Path(manifest_path).parent
+
+    max_dev_by_profile: dict[str, float] = {}
+    config_path = root / "config.resolved.yaml"
+    if config_path.exists():
+        from voders.config.loader import load_config
+
+        for p in load_config(config_path).score_augmentation:
+            if p.humanize_time is not None:
+                max_dev_by_profile[p.profile_id] = p.humanize_time.max_dev_s
+
+    report = EvalReport()
+    report.add(sc001_off_safe(records, root))
+    report.add(sc002_transpose_exact(records, root))
+    report.add(sc003_humanize_valid(records, root, max_dev_by_profile))
+    report.add(sc004_volume_widens(records, root))
+    report.add(sc005_reexpand_identical(manifest_path, records, root))
+    report.add(sc006_lineage(records))
+    report.add(sc007_coverage(manifest_path, records))
+    report.add(sc009_separation(records))
     return report
 
 

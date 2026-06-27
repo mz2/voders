@@ -25,6 +25,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval = sub.add_parser("eval", help="validate a corpus and print a Success-Criteria table")
     p_eval.add_argument("--manifest", required=True)
     p_eval.add_argument("--strict", action="store_true")
+    p_eval.add_argument(
+        "--suite", default=None, help="evaluation suite: 'default' (001 SCs) or 'score_aug' (003)"
+    )
 
     p_audit = sub.add_parser("audit", help="license/consent audit over the manifest")
     p_audit.add_argument("--manifest", required=True)
@@ -60,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "eval":
         from voders.cli.eval import eval_command
 
-        return eval_command(args.manifest, strict=args.strict)
+        return eval_command(args.manifest, strict=args.strict, suite=args.suite)
     if args.command == "audit":
         from voders.cli.audit import audit_command
 

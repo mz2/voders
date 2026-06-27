@@ -159,6 +159,32 @@ just splits                            # source-stratified train/val splits (iss
 `wav`+`tsv` pairs), `rejected/` (non-accepted samples, never trained on), and `checkpoints/`. The
 `out/` tree is git-ignored — generated corpora are never committed.
 
+## Score-domain augmentations (optional)
+
+An optional, opt-in pre-render stage fans out *score variants* from each base score along three axes
+before anything renders — **transpose** (semitone/octave pitch shift), **humanize_time** (seeded
+onset/duration jitter), and **volume** (seeded per-note gain). Because a variant is just another
+input score flowing through the whole pipeline, its labels are correct by construction. The feature
+is **off by default**: with no `score_augmentation` block a run is byte-identical to before, and no
+`corpus/augmented/` directory appears.
+
+```yaml
+score_augmentation:                # default [] when absent — feature off
+  - profile_id: all-axes
+    transpose:      { offsets: [-12, 12], policy: drop, window: [0, 127] }
+    humanize_time:  { onset_sigma_s: 0.02, duration_sigma_s: 0.02, max_dev_s: 0.05, draws: 2 }
+    volume:         { gain_db_range: [-6.0, 6.0], distribution: uniform }
+```
+
+Variants are written to a distinct `corpus/augmented/<axis>/` (and `rejected/augmented/<axis>/`)
+subtree — never co-mingled with the originals in `corpus/` — and each variant's `score_id` encodes
+its base score and applied transform (e.g. `score_000__t+12`), so every file is self-describing.
+Evaluate a run against this feature's Success Criteria with:
+
+```bash
+uv run voders run --config evals/fixtures/score-aug-smoke.yaml
+uv run voders eval --manifest out/score-aug-smoke/manifest.jsonl --suite score_aug
+```
 ## Consuming the corpus (for training)
 
 If you're training a transcription model on the output, here's what you need:
