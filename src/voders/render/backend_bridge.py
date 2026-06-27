@@ -112,6 +112,37 @@ def _run_worker(name: str, module: str, request: dict, files: list[Path], timeou
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
+def generate_lyrics_via_backend(
+    theme: str,
+    score: Score,
+    seed: int,
+    *,
+    model_ref: str = "",
+    timeout_s: float = 600.0,
+) -> str:
+    """Run the out-of-process lyrics model backend and return generated lyric text (FR-011).
+
+    The core segments the returned text into one-syllable-per-note (FR-019). Raises RuntimeError if
+    the backend project is missing or the worker fails (mirrors the other backends).
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        req_path = Path(tmp) / "request.json"
+        request = {
+            "theme": theme,
+            "score_id": score.score_id,
+            "notes": [[n.onset_s, n.offset_s, n.pitch_midi] for n in score.notes],
+            "seed": int(seed),
+            "model_ref": model_ref,
+        }
+        req_path.write_text(json.dumps(request), encoding="utf-8")
+        result = _run_worker("lyrics", "voders_lyrics_backend.worker", {}, [req_path], timeout_s)
+        if "text" in result:
+            return str(result["text"])
+        if "syllables" in result:
+            return " ".join(str(s) for s in result["syllables"] if s)
+        raise RuntimeError("lyrics backend returned neither 'text' nor 'syllables'")
+
+
 def convert_via_backend(
     name: str,
     module: str,

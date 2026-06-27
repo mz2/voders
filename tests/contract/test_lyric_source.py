@@ -7,8 +7,6 @@ returns an all-``None`` plan (byte-identity path, SC-001); count reconciliation 
 
 from __future__ import annotations
 
-import pytest
-
 from voders.lyrics.models import LyricPlan, LyricSource
 from voders.lyrics.sources import (
     LyricSourceProtocol,
@@ -89,10 +87,11 @@ def test_resolve_source_supplied_is_implemented():
     assert src.requires_gpu() is False
 
 
-@pytest.mark.parametrize("name", ["generated"])
-def test_resolve_source_unimplemented_raises(name: str):
-    with pytest.raises(NotImplementedError):
-        resolve_source(name)
+def test_resolve_source_generated_is_implemented():
+    """``generated`` lands in US4 (FR-011); resolves to a CPU-facing source (model out-of-proc)."""
+    src = resolve_source("generated")
+    assert src.name == "generated"
+    assert src.requires_gpu() is False
 
 
 def test_supplied_source_takes_cells_as_authored_and_flags_multisyllable():

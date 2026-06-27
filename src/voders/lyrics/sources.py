@@ -8,15 +8,29 @@ phases; ``resolve_source`` is the registry seam they plug into. No heavy imports
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from voders.lyrics.cache import LyricCache, request_key
 from voders.lyrics.models import LyricModel, LyricPlan, LyricSource
 from voders.lyrics.sampler import load_inventory, sample_syllables
-from voders.lyrics.syllabify import syllable_count
+from voders.lyrics.syllabify import segment, syllable_count
 from voders.seeds import sample_seed
 
 if TYPE_CHECKING:
     from voders.scores.models import Score
+
+# A generator turns (theme, score, seed) into raw lyric text; the source then segments it into
+# syllables (FR-019). Injectable so tests can avoid the out-of-process model backend.
+GeneratorFn = Callable[[str, "Score", int], str]
+
+
+class LyricLicenseRefused(PermissionError):
+    """Raised when a ``generated`` source's model license is not verified (FR-010).
+
+    Mirrors the donor-voice ``ConsentRefusedError``: the orchestrator turns it into a
+    ``license_refused`` manifest record rather than producing a sample.
+    """
 
 
 @runtime_checkable
@@ -116,6 +130,91 @@ class AutomaticSource:
         return LyricPlan.build(score.score_id, LyricSource.AUTOMATIC, list(syllables))
 
 
+def _generate_via_backend(theme: str, score: Score, seed: int, model_ref: str) -> str:
+    """Default ``generated`` generator: run the out-of-process lyrics model backend (FR-011).
+
+    Lazily bridges to ``backends/lyrics`` so no model/GPU dependency reaches the CPU core. The
+    backend returns lyric text, which the source then segments into one-syllable-per-note (FR-019).
+    """
+    from voders.render.backend_bridge import generate_lyrics_via_backend
+
+    return generate_lyrics_via_backend(theme, score, seed, model_ref=model_ref)
+
+
+class GeneratedSource:
+    """Themed, model-driven lyric source, cached as a pinned artifact (US4, FR-011/012).
+
+    Runs the model once per (score, theme, model, seed), segments the returned text into one
+    syllable per note (FR-019), and pins it so a replay reuses the pinned text with zero model
+    re-invocations (SC-007). A model whose license is unverified is refused (FR-010).
+    """
+
+    name = "generated"
+
+    def __init__(
+        self,
+        *,
+        theme: str | None = None,
+        model: LyricModel | None = None,
+        syllabifier: str = "en_rule",
+        cache_dir: str = "lyrics",
+        output_root: str | None = None,
+        generator: GeneratorFn | None = None,
+    ) -> None:
+        self._theme = theme or ""
+        self._model = model
+        self._syllabifier = syllabifier
+        self._cache_dir = cache_dir
+        self._output_root = output_root
+        self._generator = generator
+
+    def requires_gpu(self) -> bool:
+        # The model runs out-of-process (backends/lyrics); the core never imports it.
+        return False
+
+    def resolve(self, score: Score, *, master_seed: int, voice_id: str) -> LyricPlan:
+        if self._model is None or not self._model.is_usable():
+            model_id = self._model.model_id if self._model else "(none)"
+            raise LyricLicenseRefused(
+                f"lyric model {model_id!r} license not verified; refused (FR-010)"
+            )
+        seed = sample_seed(master_seed, score.score_id, voice_id, "lyrics")
+        n = len(score.notes)
+        key = request_key(self._theme, self._model.model_ref, score.score_id, seed, n)
+        cache = LyricCache(self._output_root, self._cache_dir) if self._output_root else None
+
+        cached = cache.load(key) if cache is not None else None
+        if cached is not None:
+            syllables, mismatch = reconcile(cached, n)
+        else:
+            raw_text = self._generate(score, seed)
+            segmented: list[str | None] = list(segment(raw_text))
+            syllables, mismatch = reconcile(segmented, n)
+            if cache is not None:
+                cache.store(
+                    key,
+                    score.score_id,
+                    syllables,
+                    source="generated",
+                    model_id=self._model.model_id,
+                )
+        # Each non-None entry is one syllable from ``segment`` by construction (FR-019/SC-010).
+        return LyricPlan.build(
+            score.score_id,
+            LyricSource.GENERATED,
+            syllables,
+            model=self._model,
+            mismatch=mismatch,
+            multisyllable_notes=[],
+        )
+
+    def _generate(self, score: Score, seed: int) -> str:
+        if self._generator is not None:
+            return self._generator(self._theme, score, seed)
+        assert self._model is not None
+        return _generate_via_backend(self._theme, score, seed, self._model.model_ref)
+
+
 def build_source(
     config_source: str | LyricSource,
     *,
@@ -137,6 +236,14 @@ def build_source(
         return SuppliedSource(syllabifier=syllabifier)
     if source is LyricSource.AUTOMATIC:
         return AutomaticSource(inventory=inventory)
+    if source is LyricSource.GENERATED:
+        return GeneratedSource(
+            theme=theme,
+            model=model,
+            syllabifier=syllabifier,
+            cache_dir=cache_dir,
+            output_root=output_root,
+        )
     raise NotImplementedError(f"lyric source {source.value} not implemented yet")
 
 

@@ -15,7 +15,7 @@ from voders.config.loader import config_hash, write_resolved
 from voders.config.models import RunConfig
 from voders.corpus.store import CorpusStore
 from voders.lyrics.models import LyricPlan, LyricSource
-from voders.lyrics.sources import LyricSourceProtocol, build_source
+from voders.lyrics.sources import LyricLicenseRefused, LyricSourceProtocol, build_source
 from voders.manifest.io import ManifestWriter
 from voders.manifest.models import ProvenanceRecord, ValidationVerdict, VerdictStatus
 from voders.render.augmentor import Augmentor
@@ -304,7 +304,32 @@ class Orchestrator:
             manifest.append(record)
             return record, None
 
-        plan = self._lyric_plan(ps, voice)
+        # Lyric model license gate (FR-010), mirroring the donor-voice consent gate above: a refused
+        # generated model produces a license_refused record and no audio, surfaced in the manifest.
+        try:
+            plan = self._lyric_plan(ps, voice)
+        except LyricLicenseRefused as exc:
+            model = self.config.lyrics.model
+            record = ProvenanceRecord(
+                sample_id=sample_id,
+                score_id=ps.score.score_id,
+                score_path="",
+                audio_path="",
+                lane=lane_name,
+                voice_id=voice.voice_id,
+                seed=seed,
+                voice_license=voice.license,
+                consent_verified=voice.consent_verified,
+                config_hash=self.config_hash,
+                verdict=ValidationVerdict(
+                    status=VerdictStatus.LICENSE_REFUSED, reason=str(exc)
+                ),
+                lyric_source=LyricSource.GENERATED.value,
+                lyric_model=model.model_id if model else None,
+                lyric_model_license=model.license if model else None,
+            )
+            manifest.append(record)
+            return record, None
         lyrics = plan.syllables if plan is not None else None
         result = lane.render(
             RenderRequest(
