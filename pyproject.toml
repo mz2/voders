@@ -39,6 +39,11 @@ dev = [
     "mypy>=2.1",
     "pytest>=9.1",
 ]
+# Streaming fetch of real donor voices (VocalSet / VCTK) for `evals/download_donors.py`.
+donors = [
+    "datasets>=2.19",
+    "librosa>=0.11",
+]
 
 [project.scripts]
 voders = "voders.cli.__main__:main"

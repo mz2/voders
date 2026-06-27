@@ -121,6 +121,34 @@ never committed.
 **Alternatives considered:** WebDataset/tar shards or Parquet — better for remote object storage but
 add packaging the consumer doesn't need for the first version (managed cloud storage is out of scope).
 
+## Decision 8 — Real donor voices and modern alternative methods (in scope, behind FR-015)
+
+The renderer boundary (FR-015) makes the toolkit choices swappable, so the following are admitted
+as **alternative methods** alongside the load-bearing baselines. Every alternative stays behind the
+same alignment-validator gate, so admitting it cannot weaken label correctness.
+
+**Real donor voices (replacing the synthetic fixture vowel).** The deterministic / voice-conversion
+base render takes a donor recording; a *real* human vowel makes it markedly more natural than the
+generated fixture. Two permissively-licensed sources are in scope:
+- **VocalSet** (CC BY 4.0) — professional singers sustaining vowels with varied techniques; the
+  closest match to "donor vowels".
+- **VCTK** (CC BY 4.0) — read speech; voiced segments serve as donor timbres, and VCTK-trained RVC
+  models are the consented voice-conversion targets (Decision 4).
+Both are fetched per-sample (streamed, not bundled), recorded with their license string and
+`consent_verified=true`. Operator-recorded donors are the third path (see issue: record-your-own).
+
+**Modern alternative methods.** Newer ≠ automatically better here — the alignment constraint keeps
+"derive audio from the score" as the safe baseline — but these are admitted behind FR-015:
+- **Zero-shot voice conversion** — **Seed-VC** (diffusion-transformer flow-matching; file→file,
+  reference-audio-driven, no per-voice training; auto-downloads checkpoints; GPL-3.0, Python 3.10)
+  and **kNN-VC / kNN-SVC** (WavLM features + nearest-neighbour matching; permissive, modern stack).
+  These remove RVC's per-voice `.pth` training and (for kNN-VC) the fairseq/old-Python dependency.
+- **Modern neural vocoders** — **BigVGAN** / **Vocos** as drop-in replacements for WORLD in the
+  deterministic lane: f0/mel-conditioned (so still alignment-safe by construction) but far more
+  realistic, on a current torch stack.
+- **Expressive SVS** — **DiffSinger** / **TCSinger** (stronger than NNSVS) remain lyric-driven and
+  re-generate timing, so they stay behind the force-score-f0 / re-derive safety net (Decision 3).
+
 ## Resolved unknowns
 
 | Deferred item (from spec) | Resolution |

@@ -84,6 +84,16 @@ setup-rvc-backend:
 download-rvc-voice: setup
     uv run python evals/download_models.py vctk-p231
 
+# Stream real donor voices (VocalSet + VCTK, CC BY 4.0) into models/donors/ (git-ignored).
+download-donors:
+    uv sync --extra cpu --extra donors
+    uv run --extra cpu --extra donors python evals/download_donors.py
+
+# Render the deterministic lane with a real VocalSet donor voice, then evaluate.
+demo-real-donor: download-donors
+    uv run voders run --config evals/fixtures/real_donor.yaml
+    uv run voders eval --manifest out/real_donor/manifest.jsonl
+
 # Real end-to-end RVC voice conversion with the consented VCTK p231 voice.
 demo-rvc: setup setup-rvc-backend download-rvc-models download-rvc-voice
     uv run voders run --config evals/fixtures/rvc_vctk.yaml

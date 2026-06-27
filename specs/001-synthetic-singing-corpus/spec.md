@@ -181,3 +181,20 @@ A reviewer (or the same engineer auditing their own corpus) needs to answer ques
 - Lyrics are optional. When omitted, the deterministic and neural-SVS lanes default to a neutral open vowel; when provided, the operator is responsible for syllable-count alignment to notes (the system surfaces mismatches but does not autocorrect them beyond the documented vowel fallback).
 - Per-sample reproducibility uses the documented tolerance in SC-009: bit-exact for the deterministic and voice-conversion lanes; same validator verdict plus f0-within-±25-cents and onset-within-10 ms for non-bit-deterministic neural/GPU lanes (some vocoders are not bit-deterministic across hardware).
 - The system is implemented in Python; the orchestrator and the rendering/voice-conversion/augmentation primitives share one Python runtime, and the GPU-accelerated lanes run on PyTorch. This fixes the linter/formatter/test-framework choices at planning time.
+
+### Alternative methods (in scope, behind the renderer boundary FR-015)
+
+The renderer boundary makes toolkit choices swappable; the following are supported as additional
+alternative methods, each still gated by the alignment validator (FR-006), so admitting one cannot
+weaken label correctness:
+
+- **Real donor voices** — in addition to a synthetic donor vowel, the system supports enrolling
+  *real* donor recordings from permissively-licensed datasets, specifically **VocalSet** (CC BY 4.0,
+  sustained sung vowels) and **VCTK** (CC BY 4.0, read speech; voiced segments and VCTK-trained
+  voice-conversion models), and operator-recorded donors. Each carries its license string and
+  `consent_verified` flag (FR-011).
+- **Modern renderer/converter methods** — zero-shot voice conversion (Seed-VC, kNN-VC) as
+  alternatives to per-voice-trained RVC; modern f0-conditioned neural vocoders (BigVGAN, Vocos) as
+  alternatives to the WORLD vocoder in the deterministic lane; and diffusion SVS (DiffSinger,
+  TCSinger) for the expressive lane (kept behind the force-score-F0 / label re-derivation safety net,
+  FR-007). These are optional and do not change the deterministic CPU baseline (FR-009).
