@@ -28,8 +28,8 @@ DONORS_ROOT = Path(__file__).resolve().parents[1] / "models" / "donors"
 
 # Default fetch: VocalSet (a reliable streaming mirror of sustained sung vowels).
 # VCTK is primarily used as a voice-conversion *target* via the consented RVC p231 model
-# (`just download-rvc-voice`); a VCTK raw-donor-wav is only reachable via the canonical CSTR mirror,
-# which streams slowly, so it is opt-in (`python evals/download_donors.py vctk`), not in the default.
+# (`just download-rvc-voice`); a VCTK raw-donor-wav is only reachable via the canonical CSTR
+# mirror, which streams slowly, so it is opt-in (`... download_donors.py vctk`), not the default.
 SOURCES = {
     "vocalset": ("Bill13579/vocalset-mirror", "train", "vocalset_singer.wav"),
     "vctk": ("CSTR-Edinburgh/vctk", "train", "vctk_speaker.wav"),
