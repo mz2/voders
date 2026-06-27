@@ -1,27 +1,36 @@
-# Deterministic lane driven by a REAL donor voice (VocalSet, CC BY 4.0) instead of the synthetic
-# fixture vowel. Fetch it first: `just download-donors`.
-run_id: real_donor
-master_seed: 20260627
-
-scores: evals/fixtures/scores/score_00[0-1].tsv
-output_root: out/real_donor
-
-voices:
-  - voice_id: vocalset_donor
-    kind: deterministic_donor
-    license: "VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample"
-    consent_verified: true
-    model_ref: models/donors/vocalset_singer.wav
-
 lanes:
   deterministic:
     enabled: true
     synth: world
-
+master_seed: 20260627
+output_root: out/real_donor
+run_id: real_donor
+scores: evals/fixtures/scores/score_00[0-1].tsv
 validator:
-  onset_ms: 50
+  f0_cents: 25
+  f0_coverage: 0.8
   min_note_ms: null
   min_note_percentile: 1
-  f0_cents: 25
-  f0_coverage: 0.80
+  onset_ms: 50
   snr_floor_db: 0
+voices:
+- consent_verified: true
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  model_ref: models/donors/vocalset_singer.wav
+  voice_id: vocalset_donor
+- consent_verified: true
+  kind: deterministic_donor
+  license: personal use, research only
+  model_ref: evals/fixtures/voices/test_existing_donorah_helene.wav
+  voice_id: test_existing_donorah_helene
+- consent_verified: true
+  kind: deterministic_donor
+  license: personal use, research only
+  model_ref: evals/fixtures/voices/donor_ah_synth.wav
+  voice_id: donor_ah_synth
+- consent_verified: true
+  kind: deterministic_donor
+  license: personal use, research only
+  model_ref: evals/fixtures/voices/donor_oo_synth.wav
+  voice_id: donor_oo_synth
