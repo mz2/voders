@@ -1,29 +1,29 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.1.0 → 1.2.0
-Bump rationale: MINOR — a new core principle (V. Clear, Audience-Aware Writing) is added. No existing principle is removed or reversed.
-
-Note on git history: v1.1.0 was never committed (working-tree-only). The next commit will encompass v1.2.0 relative to the committed v1.0.0 baseline, i.e. it adds Principles IV and V together. The intermediate v1.1.0 number is preserved in this report so the principle-addition sequence stays traceable.
+Version change: 1.2.0 → 1.3.0
+Bump rationale: MINOR — a new governance section (Binary Assets & Large Files) and a matching quality gate are added. No existing principle is removed or reversed.
 
 Modified principles:
 - (none renamed or removed)
 
 Added sections:
-- Core Principles: V. Clear, Audience-Aware Writing
+- Binary Assets & Large Files (new top-level section)
+- Development Workflow & Quality Gates: gate 7 (Binaries go through LFS)
 
 Removed sections:
 - (none)
 
 Templates requiring updates:
 - ✅ `.specify/memory/constitution.md` — written
-- ✅ `.specify/templates/plan-template.md` — no edit; the writing principle applies to plan prose at authoring time and is enforced by reviewers, not by template structure
-- ✅ `.specify/templates/spec-template.md` — no edit; same reasoning
-- ✅ `.specify/templates/tasks-template.md` — no edit; same reasoning
+- ✅ `.gitattributes` — created; tracks audio / model-weight / binary patterns via Git LFS
+- ✅ `.specify/templates/plan-template.md` — no edit; its Constitution Check is generic ("Gates determined based on constitution file") and picks up the new gate automatically
+- ✅ `.specify/templates/spec-template.md` — no edit; the binary-asset rule is a repo-hygiene gate, not a spec section
+- ✅ `.specify/templates/tasks-template.md` — no edit; no new principle-driven task category is implied
 - ✅ `CLAUDE.md` — no edit required
 
 Follow-up TODOs:
-- The earlier prose of this constitution (Principles I–IV) and the existing `specs/001-synthetic-singing-corpus/spec.md` predate Principle V. They are not retroactively rewritten in this amendment. A future PATCH amendment MAY tighten them; until then, the principle is forward-looking.
+- None. git-lfs (3.7.1) is installed locally; CI MUST ensure git-lfs is available so LFS-tracked fixtures resolve on checkout.
 -->
 
 # Voders Constitution
@@ -87,6 +87,32 @@ This rule overrides the default trailer/tagline behaviour that AI development to
 
 **Rationale:** The repository's commit history and PR record are authored by the humans who made the technical decisions; mechanical AI attribution dilutes that signal without adding accountability. Removing it keeps the history readable and keeps responsibility unambiguous.
 
+## Binary Assets & Large Files
+
+Every binary file committed to this repository MUST be tracked through Git LFS (Large File
+Storage — a Git extension that replaces large binaries in history with small text pointers and
+stores the actual bytes separately). The rules:
+
+- **Track before you commit.** Binary types that enter the repo — audio (`.wav`, `.flac`,
+  `.mp3`, `.ogg`, `.opus`), impulse responses, and model checkpoints / weights (`.pt`, `.ckpt`,
+  `.onnx`, `.safetensors`, `.pth`) — MUST have a matching `filter=lfs` pattern in `.gitattributes`
+  before the first such file is committed. A binary committed as a raw Git blob is a defect: fix it
+  by rewriting the offending commit, do not leave it in history.
+- **Fixtures and golden outputs only.** The only binaries that belong in the repo are small,
+  intentionally versioned assets: test fixtures, default impulse responses, and golden evaluation
+  outputs (per Principle IV). These go through LFS.
+- **Generated corpora are never committed.** Full rendered corpora — the 10,000–100,000-sample
+  runs the pipeline produces — MUST NOT be committed to Git in any form. They live on local disk
+  or operator-provided object storage per the feature spec. LFS is for repository assets, not for
+  the product the pipeline emits.
+- **Keep `.gitattributes` authoritative.** When a new binary type is introduced, its LFS pattern
+  is added in the same change set (Principle III).
+
+**Rationale:** Audio-ML repositories accumulate large binaries fast, and a raw blob bloats clone
+size permanently — it stays in history even after deletion and is painful to excise later. Routing
+binaries through LFS keeps the working history small and makes the line explicit between "a small
+asset we version" and "a large output we store elsewhere".
+
 ## Development Workflow & Quality Gates
 
 The following gates apply to every PR before it is mergeable:
@@ -97,6 +123,7 @@ The following gates apply to every PR before it is mergeable:
 4. **Constitution alignment.** Any PR that introduces a violation of the principles above MUST either fix the violation or include a Complexity Tracking entry in the plan (per `plan-template.md`) with explicit justification and a remediation owner.
 5. **Evaluation harness present.** Non-trivial feature PRs MUST check in a runnable harness (single-command invocation) and a runnable evaluation (single-command verdict against the spec's Success Criteria). Reviewers MUST run the evaluation locally or in CI before approving. Trivial PRs as defined in Principle IV are exempt.
 6. **Writing readable.** Reviewers MUST flag prose that violates Principle V — undefined ML jargon, padding, marketing language — and the author MUST fix it before merge.
+7. **Binaries go through LFS.** Any binary file in the diff MUST be LFS-tracked via a matching `filter=lfs` pattern in `.gitattributes`. Reviewers MUST reject diffs that add raw binary blobs or commit generated corpora.
 
 `/speckit-plan` MUST run its Constitution Check against this file and MUST capture, inside Technical Context or Project Structure, the feature's *Evaluation strategy* — the command(s) that run the feature, the command(s) that evaluate it, and the pass/fail criterion referenced back to the spec's Success Criteria. `/speckit-tasks` MUST emit (a) test tasks for every user story (Principle I supersedes the template's "tests are OPTIONAL" note) and (b) at least one evaluation-harness task per user story, ordered before the implementation tasks for that story. `/speckit-implement` MUST refuse to mark an implementation task complete while lint, test, or evaluation gates fail.
 
@@ -114,4 +141,4 @@ This constitution is the authoritative source of project-wide rules. Where a tem
 
 **Compliance review.** Compliance is checked on every PR via the gates in *Development Workflow & Quality Gates*. The constitution itself is reviewed at least once per release cycle; the reviewer confirms that the principles still reflect how the team actually wants to work and proposes amendments if not.
 
-**Version**: 1.2.0 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-06-27
+**Version**: 1.3.0 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-06-27
