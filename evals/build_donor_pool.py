@@ -42,6 +42,17 @@ DATASET_LICENSES = {
 }
 
 
+def _dataset_license(stem: str) -> str:
+    """License for a top-level donor wav by filename stem (prefix-aware for multi-singer sets)."""
+    if stem in DATASET_LICENSES:
+        return DATASET_LICENSES[stem]
+    if stem.startswith("vocalset"):  # vocalset_00, vocalset_01, ... (one clip per singer)
+        return DATASET_LICENSES["vocalset_singer"]
+    if stem.startswith("vctk"):
+        return DATASET_LICENSES["vctk_speaker"]
+    return "operator-recorded, consented"
+
+
 def _freesound_licenses() -> dict[str, str]:
     """Map ``<file>.wav`` -> license string from the Freesound ATTRIBUTION.txt (if present)."""
     att = FREESOUND_DIR / "ATTRIBUTION.txt"
@@ -85,7 +96,7 @@ def discover_voices() -> list[Voice]:
 
     # 2./3. Streamed datasets + operator recordings (top-level models/donors/, non-recursive).
     for wav in sorted(DONORS_DIR.glob("*.wav")):
-        add(wav, DATASET_LICENSES.get(wav.stem, "operator-recorded, consented"))
+        add(wav, _dataset_license(wav.stem))
 
     # 4. Freesound fetches.
     fs_licenses = _freesound_licenses()

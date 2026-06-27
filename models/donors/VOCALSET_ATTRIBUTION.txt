@@ -1,0 +1,18 @@
+VocalSet donor voices — attribution (CC BY 4.0)
+================================================
+
+The `vocalset_*.wav` donor voices in this directory are single clips of distinct singers from
+VocalSet, used here as deterministic-lane timbre donors (the score supplies pitch/timing; the donor
+supplies voice character). They are versioned via Git LFS so the data-augmentation pipeline has
+reproducible source material.
+
+Dataset: VocalSet — A Singing Voice Dataset.
+Authors: Julia Wilkins, Prem Seetharaman, Alison Wahl, Bryan Pardo (2018).
+Venue:   ISMIR 2018.
+License: Creative Commons Attribution 4.0 International (CC BY 4.0).
+         https://creativecommons.org/licenses/by/4.0/
+Source mirror: https://huggingface.co/datasets/Bill13579/vocalset-mirror
+
+Each enrolled file is one clip from a distinct singer (the mirror's `label` column is the singer id);
+`vocalset_singer.wav` is singer 0, `vocalset_NN.wav` is singer NN. Per-voice license and consent are
+recorded in the run manifest and in `evals/fixtures/donor_pool.yaml`.

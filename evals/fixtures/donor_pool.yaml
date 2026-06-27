@@ -16,6 +16,91 @@ voices:
   license: CC0 synthetic vowel
   consent_verified: true
   model_ref: evals/fixtures/voices/donor_oo_synth.wav
+- voice_id: vocalset_01
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_01.wav
+- voice_id: vocalset_02
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_02.wav
+- voice_id: vocalset_03
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_03.wav
+- voice_id: vocalset_04
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_04.wav
+- voice_id: vocalset_05
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_05.wav
+- voice_id: vocalset_06
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_06.wav
+- voice_id: vocalset_07
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_07.wav
+- voice_id: vocalset_08
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_08.wav
+- voice_id: vocalset_09
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_09.wav
+- voice_id: vocalset_10
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_10.wav
+- voice_id: vocalset_11
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_11.wav
+- voice_id: vocalset_12
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_12.wav
+- voice_id: vocalset_13
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_13.wav
+- voice_id: vocalset_14
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_14.wav
+- voice_id: vocalset_15
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_15.wav
+- voice_id: vocalset_16
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_16.wav
+- voice_id: vocalset_17
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_17.wav
 - voice_id: vocalset_singer
   kind: deterministic_donor
   license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample

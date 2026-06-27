@@ -71,8 +71,8 @@ build-pool: setup
 # present), unifies them into one pool, renders the deterministic lane, fans each accepted render
 # through the augmentation profiles, then audits + evaluates + aggregates. FETCH=0 skips the network
 # fetches and runs purely on the checked-in donors (this is what the CI action uses).
-augment FETCH="1" FREESOUND_COUNT="5" pool="evals/fixtures/donor_pool.yaml" manifest="out/donor_pool/manifest.jsonl": fixtures
-    {{ if FETCH == "1" { "-uv run --extra cpu --extra donors python evals/download_donors.py" } else { "echo 'FETCH=0: using checked-in donors (no dataset download)'" } }}
+augment FETCH="1" FREESOUND_COUNT="5" VOCALSET_SINGERS="20" pool="evals/fixtures/donor_pool.yaml" manifest="out/donor_pool/manifest.jsonl": fixtures
+    {{ if FETCH == "1" { "-uv run --extra cpu --extra donors python evals/download_donors.py --vocalset-singers " + VOCALSET_SINGERS } else { "echo 'FETCH=0: using checked-in donors (no dataset download)'" } }}
     {{ if FETCH == "1" { "-uv run --extra cpu python evals/download_freesound.py --count " + FREESOUND_COUNT + " --license cc0" } else { "echo 'FETCH=0: using checked-in Freesound donors (no download)'" } }}
     rm -rf out/donor_pool
     uv run --extra cpu python evals/build_donor_pool.py --out {{pool}}
@@ -85,8 +85,8 @@ augment FETCH="1" FREESOUND_COUNT="5" pool="evals/fixtures/donor_pool.yaml" mani
 # Like `augment`, but ALSO lays vocal-conditioned accompaniment (spec 002) under each accepted donor
 # render — including the real VocalSet singer — as a training augmentation. BACKEND=fake is CPU/CI;
 # BACKEND=acestep uses the real GPU model (run `just setup-acestep-backend` first).
-augment-accomp BACKEND="fake" FETCH="1" FREESOUND_COUNT="5" pool="evals/fixtures/donor_pool_accomp.yaml" manifest="out/donor_pool_accomp/manifest.jsonl": fixtures setup-accomp
-    {{ if FETCH == "1" { "-uv run --extra cpu --extra donors python evals/download_donors.py" } else { "echo 'FETCH=0: using checked-in donors (no dataset download)'" } }}
+augment-accomp BACKEND="fake" FETCH="1" FREESOUND_COUNT="5" VOCALSET_SINGERS="20" pool="evals/fixtures/donor_pool_accomp.yaml" manifest="out/donor_pool_accomp/manifest.jsonl": fixtures setup-accomp
+    {{ if FETCH == "1" { "-uv run --extra cpu --extra donors python evals/download_donors.py --vocalset-singers " + VOCALSET_SINGERS } else { "echo 'FETCH=0: using checked-in donors (no dataset download)'" } }}
     {{ if FETCH == "1" { "-uv run --extra cpu python evals/download_freesound.py --count " + FREESOUND_COUNT + " --license cc0" } else { "echo 'FETCH=0: using checked-in Freesound donors (no download)'" } }}
     rm -rf out/donor_pool_accomp
     uv run --extra cpu python evals/build_donor_pool.py --accompaniment {{BACKEND}} --run-id donor_pool_accomp --out {{pool}}
@@ -136,10 +136,11 @@ setup-rvc-backend:
 download-rvc-voice: setup
     uv run python evals/download_models.py vctk-p231
 
-# Stream real donor voices (VocalSet + VCTK, CC BY 4.0) into models/donors/ (git-ignored).
-download-donors:
+# Stream real donor voices (VocalSet + VCTK, CC BY 4.0) into models/donors/. SINGERS=N enrolls N
+# distinct VocalSet singers (~20 available); the vocalset_*.wav files are versioned via LFS.
+download-donors SINGERS="1":
     uv sync --extra cpu --extra donors
-    uv run --extra cpu --extra donors python evals/download_donors.py
+    uv run --extra cpu --extra donors python evals/download_donors.py --vocalset-singers {{SINGERS}}
 
 # Fetch CC0/CC-BY donor vowels from Freesound (needs FREESOUND_API_TOKEN). QUERY=/COUNT=/LICENSE= optional.
 download-freesound QUERY="sung vowel" COUNT="3" LICENSE="cc0": setup
