@@ -17,13 +17,10 @@ a CUDA context, the augment+validate loop must run in the main training process
 (``num_workers=0`` for the train loader) rather than in forked DataLoader workers.
 ``pyin_f0`` is the CPU fallback.
 
-Sample-rate note: the corpus augmentation chain (``voders.render.augment``) designs its
-codec/reverb filters against voders' 22.05 kHz constant, while the training audio is 16 kHz
-(``training.constants.SAMPLE_RATE``). The steps remain label-safe at any rate and never
-exceed Nyquist, but the *effective* codec cutoff / reverb decay drift from the configured
-values (~0.73x / ~1.38x). That is acceptable for domain randomization; making the chain
-sample-rate-aware is a follow-up if exact parameters are needed. The validator is built
-with the correct 16 kHz ``sr`` so onset/offset timing is exact.
+Sample rate: both the augmentation chain and the validator are built at the training rate
+(``training.constants.SAMPLE_RATE``, 16 kHz), not voders' 22.05 kHz corpus default, so codec
+cutoffs / reverb decays and onset/offset timing are all physically correct for the audio
+actually being augmented.
 """
 
 from __future__ import annotations
@@ -93,7 +90,9 @@ class DynamicAugmentor:
     ) -> None:
         from voders.render.augment import AugmentationChain
 
-        self.chain = AugmentationChain(profiles)
+        # Pass the training sample rate so the chain designs its codec/reverb filters for the
+        # audio actually being augmented (16 kHz here, not voders' 22.05 kHz corpus default).
+        self.chain = AugmentationChain(profiles, sr=int(sr))
         self.profile_ids = self.chain.profile_ids()
         if not self.profile_ids:
             raise ValueError("DynamicAugmentor requires at least one augmentation profile")

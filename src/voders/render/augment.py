@@ -38,7 +38,7 @@ _EPS = 1e-12
 # (new_vocal, new_accompaniment_or_None). Accompaniment is carried as a separate stem so the
 # vocal-to-accompaniment SNR can be reported and so perturbations never touch the vocal.
 StepFn = Callable[
-    [np.ndarray, "np.ndarray | None", np.random.Generator, dict[str, object]],
+    [np.ndarray, "np.ndarray | None", np.random.Generator, dict[str, object], int],
     "tuple[np.ndarray, np.ndarray | None]",
 ]
 
@@ -84,11 +84,12 @@ def _step_reverb_ir(
     accomp: np.ndarray | None,
     rng: np.random.Generator,
     params: dict[str, object],
+    sr: int,
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Convolve the vocal with a synthetic room IR; onsets stay aligned (direct sound at t=0)."""
     decay_s = _as_float(params.get("reverb_decay_s"), 0.10)
     wet = _as_float(params.get("reverb_wet"), 0.18)
-    ir = _synth_room_ir(rng, decay_s=decay_s, wet=wet)
+    ir = _synth_room_ir(rng, decay_s=decay_s, wet=wet, sr=sr)
     wet_vocal = fftconvolve(vocal.astype(np.float64), ir, mode="full")[: vocal.size]
     return wet_vocal.astype(np.float32), accomp
 
@@ -98,13 +99,14 @@ def _step_codec(
     accomp: np.ndarray | None,
     rng: np.random.Generator,
     params: dict[str, object],
+    sr: int,
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Band-limit the vocal with a ZERO-PHASE lowpass to mimic lossy-codec roll-off.
 
     ``filtfilt`` is forward-backward, so there is no group delay and onsets/offsets do not move
     (label-safe). torchaudio provides the real MP3/Opus codec round-trip in production.
     """
-    nyq = SAMPLE_RATE / 2.0
+    nyq = sr / 2.0
     bitrate_kbps = _as_float(params.get("bitrate_kbps"), 96.0)
     cutoff = _as_float(params.get("cutoff_hz"), min(nyq * 0.95, 80.0 * bitrate_kbps))
     cutoff = float(np.clip(cutoff, 1000.0, nyq * 0.99))
@@ -118,7 +120,7 @@ def _step_codec(
     return filtered.astype(np.float32), accomp
 
 
-def _synth_accompaniment(n: int, rng: np.random.Generator) -> np.ndarray:
+def _synth_accompaniment(n: int, rng: np.random.Generator, sr: int = SAMPLE_RATE) -> np.ndarray:
     """A seeded synthetic accompaniment stem: lowpass-filtered noise (a simple pad).
 
     The accompaniment may have its own group delay — it is not the vocal, so it is label-safe.
@@ -126,7 +128,7 @@ def _synth_accompaniment(n: int, rng: np.random.Generator) -> np.ndarray:
     if n <= 0:
         return np.zeros(0, dtype=np.float64)
     noise = rng.standard_normal(n)
-    b, a = butter(2, 2000.0 / (SAMPLE_RATE / 2.0), btype="low")
+    b, a = butter(2, 2000.0 / (sr / 2.0), btype="low")
     pad = lfilter(b, a, noise)
     return np.asarray(pad, dtype=np.float64)
 
@@ -136,6 +138,7 @@ def _step_accompaniment_mix(
     accomp: np.ndarray | None,
     rng: np.random.Generator,
     params: dict[str, object],
+    sr: int,
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Add a synthetic accompaniment at a target vocal-to-accompaniment SNR sampled from params.
 
@@ -149,7 +152,7 @@ def _step_accompaniment_mix(
     else:
         target_snr = _as_float(snr_param, 12.0)
 
-    pad = _synth_accompaniment(vocal.size, rng)
+    pad = _synth_accompaniment(vocal.size, rng, sr)
     rms_vocal = _rms(vocal)
     rms_pad = _rms(pad)
     if rms_pad <= _EPS or rms_vocal <= _EPS:
@@ -178,9 +181,14 @@ class AugmentationChain:
         self,
         profiles: list[AugmentationProfileConfig],
         options: dict[str, object] | None = None,
+        sr: int = SAMPLE_RATE,
     ) -> None:
         self.profiles = {p.profile_id: p for p in profiles}
         self.options = options or {}
+        # Filters (codec lowpass, reverb IR length, accompaniment lowpass) are designed at this
+        # rate. Defaults to the corpus rate (22.05 kHz); training passes its own rate (16 kHz) so
+        # cutoffs/decays are physically correct for the audio actually being augmented.
+        self.sr = sr
 
     def profile_ids(self) -> list[str]:
         return list(self.profiles)
@@ -210,7 +218,7 @@ class AugmentationChain:
             step = _STEPS.get(step_name)
             if step is None:  # label-safe: silently skip unimplemented/unknown steps
                 continue
-            vocal, accomp = step(vocal, accomp, rng, profile.params)
+            vocal, accomp = step(vocal, accomp, rng, profile.params, self.sr)
 
         snr_db: float | None = None
         if accomp is not None:
