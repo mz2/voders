@@ -10,6 +10,38 @@ provenance (which voice, seed, license, and config produced each pair) for repla
 The intended consumer is a transcription model that ingests 22,050 Hz mono float32 audio, so
 every rendered sample uses that format.
 
+## Purpose in one paragraph
+
+Training a singing-transcription model needs lots of `(audio, note-labels)` pairs, and the hard
+part is **label accuracy**: if a note's onset in the label doesn't match the audio, the model
+learns from wrong data. The dominant risk is *alignment drift*, not audio realism. voders removes
+that risk by generating the audio **from** the labels — pitch and timing are taken straight from
+the score, so the labels are correct by construction — then **gates every sample** through an
+alignment validator and records full **provenance** (voice, seed, license, config) so any sample is
+auditable and reproducible. The result is a large, in-the-mix, license-clean synthetic corpus a
+transcription model can train on with confidence.
+
+## How it works
+
+```mermaid
+flowchart LR
+    S["scores (.tsv)<br/>onset, offset, pitch"] --> AN["analyze<br/>learn min_note_ms"]
+    AN --> L{"renderer lanes"}
+    L -->|deterministic| D["WORLD<br/>f0 from score"]
+    L -->|voice_conversion| V["timbre fan-out<br/>(f0 preserved)"]
+    L -->|svs| X["expressive SVS<br/>+ re-derive labels"]
+    D --> AUG["augmentation<br/>(label-safe)"]
+    V --> AUG
+    X --> AUG
+    AUG --> G{{"alignment validator<br/>onset / offset / f0 + consent"}}
+    G -->|accept| C[("corpus/<br/>wav + tsv")]
+    G -->|reject · quarantine · flag · refuse| RJ[("rejected/")]
+    G --> M[("manifest.jsonl<br/>provenance + verdict")]
+```
+
+One declarative YAML config plus a single `master_seed` fully specify a run; the manifest hashes
+the resolved config so a corpus replays from `manifest + scores` alone.
+
 ## The four renderer lanes
 
 Each lane is enabled or disabled independently in the run config:
@@ -28,85 +60,79 @@ Each lane is enabled or disabled independently in the run config:
 The deterministic lane and validator run on a laptop CPU with no GPU. The neural lanes
 (`svs`, `voice_conversion`) use the `gpu` extra.
 
-## Quickstart (uv)
+## Quickstart
 
-`voders` targets Python 3.14 and is managed with [uv](https://docs.astral.sh/uv/). All commands
-run through `uv run`.
+Everything is driven by a [`just`](https://github.com/casey/just) task runner; each action goes
+through uv under the hood (Python 3.14), so a fresh checkout needs no manual setup — every action
+depends on `setup` (`uv sync`, a fast no-op when already current). Run `just` to list all actions.
+
+Prerequisites: `just` (`sudo apt install just`) and, to build the `pyworld` wheel, a C/C++
+toolchain (`sudo apt install build-essential`).
 
 ```bash
-# install the CPU core (deterministic lane + validator + manifest)
-uv sync --extra cpu
-
-# generate the checked-in test fixtures (scores + a synthetic consented donor voice)
-uv run python evals/make_fixtures.py
-
-# render the deterministic baseline over the fixtures
-uv run voders run --config evals/fixtures/smoke.yaml
-
-# evaluate the produced corpus against the Success Criteria
-uv run voders eval --manifest out/smoke/manifest.jsonl
-
-# license/consent audit and aggregate statistics
-uv run voders audit --manifest out/smoke/manifest.jsonl
-uv run voders stats --manifest out/smoke/manifest.jsonl
+just                                   # list all actions
+just smoke                             # render the fixture corpus, then evaluate it (end-to-end)
+just run config=evals/fixtures/smoke.yaml   # render a corpus from a run config
+just eval                              # evaluate against the Success Criteria (non-zero on failure)
+just audit                             # license/consent audit
+just stats                             # aggregate corpus statistics
 ```
 
-`uv run voders run` writes under `out/smoke/`: `config.resolved.yaml` (the committable end-result
-record), `manifest.jsonl` (one provenance row per attempted sample), `stats.json`, `corpus/`
-(accepted `wav`+`tsv` pairs), and `rejected/` (non-accepted samples, never trained on). A run
-streams and checkpoints, so an interrupted large run resumes with `--resume`.
-
-### GPU and neural backends
-
-`uv sync --extra gpu` installs `torch`, `torchaudio`, and `torchcrepe` — these have Python 3.14
-wheels and run on this hardware (verified: CUDA available on an NVIDIA GB10). `torchcrepe` is the
-GPU CREPE pitch estimator the validator can use in place of the CPU `pyin` fallback.
-
-The expressive lanes' production model toolkits install with varying ease and are therefore wired
-as lazily-imported backends (selected per lane in the run config), not core dependencies:
-
-| Toolkit | Lane | Install on this box |
-|---------|------|---------------------|
-| Montreal Forced Aligner (MFA) | svs re-derive | `uv pip install montreal-forced-aligner` — works on Python 3.14 |
-| NNSVS | svs | pip-installable, but its `numba`/`llvmlite` pins need Python ≤3.11 |
-| rvc-python | voice_conversion | pip-installable, but its `numpy` pin needs Python ≤3.11 |
-| so-vits-svc, DiffSinger | voice_conversion / svs | GitHub repos + model weights (DiffSinger via the OpenUTAU app), not PyPI packages |
-
-The CPU backends (`backend: world` / `backend: cpu`) reproduce each lane's contract without a GPU,
-so the whole pipeline and its evaluation run on a laptop; swap in a GPU backend on a machine where
-its toolkit is installed.
+`just run` writes under `out/<run_id>/`: `config.resolved.yaml` (the resolved end-result record),
+`manifest.jsonl` (one provenance row per attempted sample), `stats.json`, `corpus/` (accepted
+`wav`+`tsv` pairs), `rejected/` (non-accepted samples, never trained on), and `checkpoints/`. The
+`out/` tree is git-ignored — generated corpora are never committed.
 
 ## Running tests / development
 
-Everything runs through uv; no extra environment setup is needed on Ubuntu. A [`just`](https://github.com/casey/just)
-task runner wraps the common actions — `just` lists them, and every action depends on `setup`
-(`uv sync`, a fast no-op when already current), so a fresh checkout needs no manual prep:
-
 ```bash
-just            # list all actions
-just setup      # create/update the CPU environment (Python 3.14 + CPU deps)
-just smoke      # render the fixtures, then evaluate them end-to-end
-just test       # full test suite
-just lint       # ruff check + ruff format --check + mypy (zero-warning gate)
-just bench      # deterministic-lane throughput vs the SC-005 floor
-just check      # lint + test (what CI runs)
-just run config=path.yaml          # render a corpus from a run config
-just eval manifest=out/.../manifest.jsonl
+just test            # full test suite
+just lint            # ruff check + ruff format --check + mypy (zero-warning gate)
+just fmt             # auto-format
+just bench           # deterministic-lane throughput vs the SC-005 floor
+just check           # lint + test (what CI runs)
 ```
 
-The equivalent raw commands (if you prefer not to use `just`) are `uv sync --extra cpu`,
-`uv run pytest`, `uv run ruff check .`, `uv run mypy`, `uv run voders run --config …`, etc.
+## GPU and neural backends
 
-Building from source needs a C/C++ toolchain for the `pyworld` wheel (`sudo apt install
-build-essential`); the resulting system-linked wheel needs no library-path tweaks at runtime.
+```bash
+just setup-gpu            # add the gpu extra (torch / torchaudio / torchcrepe)
+just smoke-gpu           # render, then validate with CREPE (neural f0) on the GPU
+just download-rvc-models # fetch the RVC base model weights into models/ (git-ignored)
+just demo-svs-nnsvs      # run the SVS lane via its out-of-process NNSVS backend
+```
 
-### Out-of-process backends (`backends/`)
+`just setup-gpu` installs torch/torchaudio/torchcrepe (Python 3.14 wheels; verified on an NVIDIA
+GB10). **Validator on GPU:** a run config with `validator.f0_method: crepe_f0` measures pitch with
+CREPE — a neural f0 (fundamental-frequency) estimator — on the GPU instead of the CPU `pyin`
+fallback; `just smoke-gpu` demonstrates it. The CPU default stays `pyin_f0` so the baseline needs
+no GPU (FR-009).
 
-Lane toolkits whose dependency chains conflict with the 3.14 core live in their own uv projects
-under `backends/` (own `pyproject.toml`, `.python-version`, `uv.lock`). The core invokes them with
-`uv run --project backends/<name>` and exchanges a JSON request plus a WAV, so the incompatible
-chains never share an interpreter. `backends/svs` is the NNSVS backend (Python 3.11); run the
-demo with `just demo-svs-nnsvs`.
+**Out-of-process backends.** Lane toolkits whose dependency chains conflict with the 3.14 core live
+in their own uv projects under `backends/` (own `pyproject.toml` / `.python-version` / `uv.lock`).
+The core invokes them with `uv run --project backends/<name>` and exchanges a JSON request plus a
+WAV, so the incompatible chains never share an interpreter. `backends/svs` runs NNSVS on Python
+3.11 (`just demo-svs-nnsvs`).
+
+```mermaid
+flowchart LR
+    subgraph core["uv project · Python 3.14 (CPU core)"]
+        O["orchestrator + validator"]
+    end
+    subgraph svs["backends/svs · uv project · Python 3.11"]
+        W["NNSVS worker"]
+    end
+    O -- "uv run --project (JSON request)" --> W
+    W -- "WAV out" --> O
+```
+
+**Neural voice models need consented weights.** Real voice conversion / neural SVS need a *trained
+voice model* for a specific singer (an RVC `.pth`, an NNSVS/DiffSinger voicebank) — large external
+assets, and exactly what the consent gate (FR-011, SC-008) governs, so the repo bundles none.
+`just download-rvc-models` fetches the RVC **base** models (HuBERT + RMVPE feature extractors — not
+a cloned voice); a target singer model is supplied per voice via its `model_ref`. The CPU backends
+(`backend: world` / `backend: cpu`) reproduce each lane's contract without a GPU or external
+weights, so the whole pipeline and its evaluation run on a laptop.
 
 ## Reproducibility
 

@@ -30,6 +30,8 @@ class ValidatorConfig(BaseModel):
     f0_cents: float = 25.0
     f0_coverage: float = 0.80
     snr_floor_db: float = 0.0
+    f0_method: str = "pyin_f0"  # pyin_f0 (CPU) | crepe_f0 (GPU) | auto
+    f0_device: str = "auto"  # auto | cuda | cpu (for crepe_f0)
 
 
 class NeuralReproduction(BaseModel):

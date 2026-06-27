@@ -86,7 +86,7 @@ def reproduce_sample(
         )
 
     # Neural/GPU lanes: same verdict status + within validator tolerances (SC-009).
-    verdict = validator.validate(result.audio, result.label_score, f0_method="pyin_f0")
+    verdict = validator.validate(result.audio, result.label_score)
     same_status = verdict.status == record.verdict.status
     onset_ok = verdict.max_onset_dev_ms <= config.reproduction.neural.onset_ms or verdict.onset_ok
     matched = same_status and onset_ok and verdict.f0_ok

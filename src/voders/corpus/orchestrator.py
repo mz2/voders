@@ -63,7 +63,9 @@ class Orchestrator:
     @staticmethod
     def _default_timing(config: RunConfig, lanes: dict[str, RendererLane]) -> TimingRegistry:
         reg = TimingRegistry()
-        reg.activate("pyin_f0")  # the CPU validator's f0 estimator is always active
+        method = config.validator.f0_method
+        # Activate the validator's f0 estimator so its frame hop / group delay feed FR-018/FR-019.
+        reg.activate("crepe_f0" if method in {"crepe_f0", "auto"} else "pyin_f0")
         return reg
 
     def _load_scores(self) -> tuple[list[ParsedScore], list[tuple[str, str]]]:
@@ -189,7 +191,7 @@ class Orchestrator:
             self.config.master_seed, ps.score.score_id, voice.voice_id, f"augment_{profile_id}"
         )
         audio, snr_db = self.augmentor.apply(result.audio, profile_id, seed)
-        verdict = validator.validate(audio, result.label_score, snr_db=snr_db, f0_method="pyin_f0")
+        verdict = validator.validate(audio, result.label_score, snr_db=snr_db)
         # Labels are unchanged by augmentation (FR-005): keep the byte-identical .tsv.
         score_tsv = (
             ps.raw_bytes if result.label_score == ps.score else serialize_score(result.label_score)
@@ -250,7 +252,7 @@ class Orchestrator:
             return record, None
 
         result = lane.render(RenderRequest(score=ps.score, voice=voice, seed=seed, options=options))
-        verdict = validator.validate(result.audio, result.label_score, f0_method="pyin_f0")
+        verdict = validator.validate(result.audio, result.label_score)
         lane_dev = result.notes.get("max_onset_dev_ms", 0.0)
         verdict = verdict.model_copy(
             update={

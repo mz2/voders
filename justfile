@@ -72,5 +72,15 @@ bench: setup
 demo-svs-nnsvs: setup setup-backends
     uv run voders run --config evals/fixtures/svs_nnsvs.yaml
 
+# Download the RVC base model weights (HuBERT + RMVPE) into models/ (git-ignored).
+download-rvc-models: setup
+    uv run python evals/download_models.py rvc
+
+# Render + validate with the CREPE neural f0 estimator on the GPU (needs the `gpu` extra).
+smoke-gpu: setup-gpu
+    uv run --extra cpu --extra gpu python evals/make_fixtures.py
+    uv run --extra cpu --extra gpu voders run --config evals/fixtures/smoke_gpu.yaml
+    uv run --extra cpu --extra gpu voders eval --manifest out/smoke_gpu/manifest.jsonl
+
 # Everything CI checks: lint, type, tests.
 check: lint test

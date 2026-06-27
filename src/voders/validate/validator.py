@@ -23,6 +23,10 @@ _FRAME = 2048
 _FMIN_MIDI = 36
 _FMAX_MIDI = 96
 
+_CREPE_SR = 16_000  # CREPE operates at 16 kHz internally
+_CREPE_HOP = 160  # 10 ms at 16 kHz — matches the crepe_f0 timing budget (FR-019)
+_CREPE_PERIODICITY_THRESH = 0.30  # voiced when CREPE periodicity exceeds this
+
 
 @dataclass
 class _Measurement:
@@ -31,7 +35,7 @@ class _Measurement:
     voiced: np.ndarray  # bool
 
 
-def _measure_f0(audio: np.ndarray, sr: int, group_delay_ms: float) -> _Measurement:
+def _measure_pyin(audio: np.ndarray, sr: int, group_delay_ms: float) -> _Measurement:
     f0, voiced, _ = librosa.pyin(
         audio,
         sr=sr,
@@ -42,6 +46,64 @@ def _measure_f0(audio: np.ndarray, sr: int, group_delay_ms: float) -> _Measureme
     )
     times = librosa.times_like(f0, sr=sr, hop_length=_HOP) - group_delay_ms / 1000.0
     return _Measurement(times=times, f0=np.asarray(f0), voiced=np.asarray(voiced, dtype=bool))
+
+
+def _measure_crepe(
+    audio: np.ndarray, sr: int, group_delay_ms: float, device: str = "auto"
+) -> _Measurement:
+    """Measure f0 with CREPE (a neural pitch estimator) on the GPU when available.
+
+    torchcrepe is imported lazily so the CPU baseline never pulls in torch at module load (FR-009).
+    Audio is resampled to 16 kHz (CREPE's native rate); frames are 10 ms apart, matching the
+    ``crepe_f0`` timing budget.
+    """
+    import torch
+    import torchcrepe
+
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    x = audio.astype(np.float32)
+    if sr != _CREPE_SR:
+        x = librosa.resample(x, orig_sr=sr, target_sr=_CREPE_SR)
+    tensor = torch.tensor(x, dtype=torch.float32, device=device).unsqueeze(0)
+    f0_t, periodicity = torchcrepe.predict(
+        tensor,
+        _CREPE_SR,
+        hop_length=_CREPE_HOP,
+        fmin=float(midi_to_hz(_FMIN_MIDI)),
+        fmax=float(midi_to_hz(_FMAX_MIDI)),
+        model="full",
+        return_periodicity=True,
+        device=device,
+        pad=True,
+    )
+    f0 = f0_t.squeeze(0).cpu().numpy().astype(float)
+    per = periodicity.squeeze(0).cpu().numpy().astype(float)
+    voiced = per > _CREPE_PERIODICITY_THRESH
+    f0 = np.where(voiced, f0, np.nan)
+    times = np.arange(f0.size) * (_CREPE_HOP / _CREPE_SR) - group_delay_ms / 1000.0
+    return _Measurement(times=times, f0=f0, voiced=voiced)
+
+
+def _measure_f0(
+    audio: np.ndarray, sr: int, group_delay_ms: float, method: str = "pyin_f0", device: str = "auto"
+) -> _Measurement:
+    """Dispatch f0 measurement. ``pyin_f0`` (CPU) is the default; ``crepe_f0`` is the GPU upgrade.
+
+    ``auto`` uses CREPE when torch + torchcrepe import, else falls back to pyin. ``crepe_f0`` is
+    explicit and raises if torchcrepe is unavailable (no silent downgrade).
+    """
+    if method == "pyin_f0":
+        return _measure_pyin(audio, sr, group_delay_ms)
+    if method == "crepe_f0":
+        return _measure_crepe(audio, sr, group_delay_ms, device)
+    if method == "auto":
+        try:
+            return _measure_crepe(audio, sr, group_delay_ms, device)
+        except ImportError:
+            return _measure_pyin(audio, sr, group_delay_ms)
+    raise ValueError(f"unknown f0 method {method!r}; expected pyin_f0 | crepe_f0 | auto")
 
 
 def _cents(f_meas: np.ndarray, f_ref: float) -> np.ndarray:
@@ -72,18 +134,22 @@ class Validator:
         label_score: Score,
         *,
         snr_db: float | None = None,
-        f0_method: str = "pyin_f0",
+        f0_method: str | None = None,
+        f0_device: str | None = None,
     ) -> ValidationVerdict:
         reasons: list[str] = []
         if label_score.is_empty:
             return ValidationVerdict(status=VerdictStatus.REJECTED, reason="empty score (no notes)")
+
+        method = f0_method or self.cfg.f0_method
+        device = f0_device or self.cfg.f0_device
 
         # Clipping gate (US3 scenario 3): never silently distort into the corpus.
         peak = float(np.max(np.abs(audio))) if audio.size else 0.0
         clipping = peak > 1.0 + 1e-6
 
         group_delay = self.timing.total_active_group_delay_ms()
-        meas = _measure_f0(audio.astype(float), self.sr, group_delay)
+        meas = _measure_f0(audio.astype(float), self.sr, group_delay, method=method, device=device)
 
         onset_ok = True
         offset_ok = True

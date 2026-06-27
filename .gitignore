@@ -220,3 +220,6 @@ __marimo__/
 # voders: generated corpora are never committed (constitution: Binary Assets & Large Files).
 # Only fixtures (LFS), the resolved config, manifest, and stats are version-controlled.
 /out/
+
+# voders: downloaded model weights are never committed (large, consent-gated assets).
+/models/
