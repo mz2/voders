@@ -5,6 +5,16 @@
 **Status**: Draft
 **Input**: User description: "Specify the system described in the research/deep-research-report.md file"
 
+## Clarifications
+
+### Session 2026-06-27
+
+- Q: What is the target total size of a single corpus run? → A: Medium — 10,000–100,000 samples per run, requiring a streaming/checkpointed pipeline and sharded on-disk layout (not an in-memory design). Two DGX Spark machines are available for the accelerated (voice-conversion / neural-SVS) lanes and downstream training.
+- Q: How is the manifest/provenance stored? → A: JSON Lines — one provenance record per line, append-only during the run. Queries, license audits, and aggregate statistics are computed by scanning the JSONL log (no separate database service).
+- Q: What happens to non-accepted samples (rejected, quarantined, flagged, license-refused)? → A: Full forensic retention — persist both the provenance record (with the rejection/quarantine reason and verdict) and the rendered audio for every non-accepted sample, stored separately from the training set so it is never trained on but remains fully auditable.
+- Q: What implementation language/runtime? → A: Python — orchestrator and the ML/audio primitives (renderers, voice conversion, augmentation) share one runtime; GPU lanes run PyTorch. No separate primary language.
+- Q: How is randomness seeded for reproducibility? → A: A single run-level master seed deterministically derives every per-sample and per-stage seed from stable identifiers (e.g., score ID + voice ID + stage name). Any individual sample is reproducible in isolation, independent of worker count or processing order.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Deterministic baseline corpus from scores (Priority: P1)
@@ -108,13 +118,14 @@ A reviewer (or the same engineer auditing their own corpus) needs to answer ques
 - **FR-004**: The system MUST allow generating multiple labelled variants per score, addressable as distinct "singer" identities, without re-creating the underlying score.
 - **FR-005**: The system MUST provide a label-safe augmentation chain — covering pitch shift, time stretch, reverb, codec round-trips, and mixing with accompaniment — that never alters the paired score's note rows.
 - **FR-006**: The system MUST run an automated alignment validator on every rendered sample before it is accepted into the corpus, comparing the audio's measured pitch and note boundaries against the paired score and rejecting samples that fall outside the configured tolerance.
+- **FR-006a**: The system MUST persist, for every non-accepted sample (rejected, quarantined, flagged, or license-refused), both its provenance record — including the verdict and the reason — and its rendered audio, in a location separate from the accepted training set so the audio is never trained on but the full attempt history remains auditable.
 - **FR-007**: Whenever a non-deterministic (expressive) renderer is used, the system MUST either (a) force the renderer to use the score-derived F0 contour, or (b) re-derive the note onsets/offsets from the actually-rendered audio and update the paired score accordingly.
-- **FR-008**: The system MUST record, for every accepted sample, a provenance entry capturing the source score, renderer, voice/timbre identity, augmentation profile, random seed, and license tag for any donor voice involved.
+- **FR-008**: The system MUST record, for every accepted sample, a provenance entry — appended as one JSON object per line to a JSON Lines manifest — capturing the source score, renderer, voice/timbre identity, augmentation profile, random seed, and license tag for any donor voice involved. The manifest MUST support per-sample lookup, license audits, and aggregate statistics by scanning this log.
 - **FR-009**: The deterministic rendering and validation paths MUST run on commodity CPU hardware without requiring a GPU, so contributors can iterate locally before scaling on accelerated infrastructure.
 - **FR-010**: The system MUST allow the operator to scale the corpus along the timbre axis (more voice-conversion voices, more augmentation profiles) independently of the underlying score set.
 - **FR-011**: The system MUST refuse to use any voice whose license tag indicates an unconsented clone of a real identifiable person and MUST surface that refusal in the provenance manifest.
 - **FR-012**: The system MUST report aggregate corpus statistics — total samples, unique scores, unique voices, pitch distribution, duration distribution, augmentation coverage — before the corpus is exported for training.
-- **FR-013**: The system MUST be deterministic with respect to its configuration and random seed, so that a published corpus manifest is sufficient to reproduce the corpus.
+- **FR-013**: The system MUST be deterministic with respect to its configuration and a single run-level master seed, from which every per-sample and per-stage seed is deterministically derived using stable identifiers (e.g., score ID + voice ID + stage name). Any individual sample MUST be reproducible in isolation, independent of worker count or processing order, so that a published corpus manifest is sufficient to reproduce the corpus.
 - **FR-014**: The system MUST quarantine any sample whose vocal level after augmentation falls below the configured signal-to-accompaniment floor, rather than emit it into the training set.
 - **FR-015**: The system MUST be modular at the renderer boundary so that the deterministic lane, expressive neural-SVS lane, voice-conversion lane, and augmentation lane can each be enabled, disabled, or replaced independently.
 
@@ -126,7 +137,7 @@ A reviewer (or the same engineer auditing their own corpus) needs to answer ques
 - **Augmentation Profile**: An ordered, label-preserving sequence of transformations (e.g., reverb IR, codec, accompaniment mix, pitch/time perturbation) applied to a rendered sample.
 - **Renderer Lane**: One of the four orthogonal rendering paths — deterministic F0-driven, expressive neural SVS, voice conversion (timbre-only), or accompaniment/mix — each with its own input/output contract.
 - **Validation Verdict**: A per-sample alignment, level, and license check result that gates corpus admission and lives inside provenance.
-- **Corpus Manifest**: The complete, replayable description of which samples are in the corpus and how each one was produced.
+- **Corpus Manifest**: The complete, replayable description of which samples are in the corpus and how each one was produced, stored as a JSON Lines file (one provenance record per line, appended as samples are accepted).
 
 ## Success Criteria *(mandatory)*
 
@@ -142,6 +153,7 @@ A reviewer (or the same engineer auditing their own corpus) needs to answer ques
 - **SC-008**: Zero samples in any exported corpus carry a donor voice whose license tag indicates an unconsented clone of a real person, verified by an end-of-run audit of the manifest.
 - **SC-009**: Any published corpus can be regenerated end-to-end from its manifest plus the source scores within a documented bit/sample tolerance, demonstrating reproducibility.
 - **SC-010**: For samples produced by the expressive-renderer lane, the re-derived note onsets deviate from the original score by less than 50 ms in at least 90% of accepted notes; samples failing this bound are rejected, not relabelled silently.
+- **SC-011**: A single corpus run produces between 10,000 and 100,000 samples without exhausting commodity-machine memory, by streaming and checkpointing progress so an interrupted run resumes from the last completed shard rather than restarting.
 
 ## Assumptions
 
@@ -155,3 +167,4 @@ A reviewer (or the same engineer auditing their own corpus) needs to answer ques
 - The system orchestrates existing open-source synthesizers, vocoders, voice-conversion models, and augmentation libraries; it does not re-implement those primitives.
 - Lyrics are optional. When omitted, the deterministic and neural-SVS lanes default to a neutral open vowel; when provided, the operator is responsible for syllable-count alignment to notes (the system surfaces mismatches but does not autocorrect them beyond the documented vowel fallback).
 - Per-sample reproducibility uses a documented numerical tolerance because some renderers and vocoders are not strictly bit-deterministic across hardware; "regeneration" means audibly equivalent and within validator tolerances.
+- The system is implemented in Python; the orchestrator and the rendering/voice-conversion/augmentation primitives share one Python runtime, and the GPU-accelerated lanes run on PyTorch. This fixes the linter/formatter/test-framework choices at planning time.
