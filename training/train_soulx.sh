@@ -17,8 +17,6 @@ exec uv run --no-sync python -m training.train \
     --patience 30 \
     --eval-metric COnPOff_f1 \
     --precision bf16 \
-    --torch-compile \
-    --torch-compile-mode reduce-overhead \
     --media-log-interval-steps 50 \
     --output-dir BASIC_PITCH_CHALLENGE \
     --experiment-name soulx_baseline \
@@ -26,5 +24,5 @@ exec uv run --no-sync python -m training.train \
     --wandb-entity krishnakalyan \
     --wandb-project MMLHackathon \
     --wandb-mode online \
-    --wandb-name soulx-30epoch-compiled-bf16 \
+    --wandb-name soulx-100epoch-bf16 \
     --wandb-tags baseline soulx huggingface bf16 media
