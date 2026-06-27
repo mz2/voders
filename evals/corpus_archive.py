@@ -87,17 +87,59 @@ def unpack(archive: Path, run_dir: Path) -> int:
     return 0
 
 
+def stage(run_ids: list[str], out_dir: Path) -> int:
+    """Assemble the trainer's flat input dir from committed datasets (OGG -> WAV).
+
+    ``SyntheticDataset`` reads ``<out_dir>/<song>/{audio.wav,score.tsv}``, so every accepted sample
+    from each ``datasets/<run_id>`` is decompressed into ``<out_dir>/<run_id>__<sample_id>/``. Pass
+    several run ids to combine corpora (e.g. the deterministic ``donor_pool`` AND the lyric/SVS
+    ``lyrics_pool``) into one training set.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    total = 0
+    for rid in run_ids:
+        arc_corpus = REPO / "datasets" / rid / "corpus"
+        if not arc_corpus.is_dir():
+            print(f"skip {rid}: no archive at {arc_corpus}", file=sys.stderr)
+            continue
+        n = 0
+        for ogg in sorted(arc_corpus.rglob("audio.ogg")):
+            dest = out_dir / f"{rid}__{ogg.parent.name}"
+            dest.mkdir(parents=True, exist_ok=True)
+            audio, sr = sf.read(ogg, dtype="float32")
+            sf.write(dest / "audio.wav", audio, sr, subtype="FLOAT")
+            tsv = ogg.parent / "score.tsv"
+            if tsv.exists():
+                shutil.copy2(tsv, dest / "score.tsv")
+            n += 1
+            total += 1
+        print(f"staged {n} songs from {rid}")
+    print(f"staged {total} songs -> {out_dir}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Pack/unpack a rendered corpus as an OGG archive")
-    parser.add_argument("mode", choices=("pack", "unpack"))
+    parser = argparse.ArgumentParser(description="Pack/unpack/stage a rendered corpus")
+    parser.add_argument("mode", choices=("pack", "unpack", "stage"))
     parser.add_argument("--run-id", default="donor_pool", help="run_id under out/ and datasets/")
     parser.add_argument("--run-dir", default=None, help="override out/<run_id>")
     parser.add_argument("--archive", default=None, help="override datasets/<run_id>")
+    parser.add_argument(
+        "--run-ids",
+        nargs="+",
+        default=["donor_pool", "lyrics_pool"],
+        help="datasets to combine into the training dir (stage mode)",
+    )
+    parser.add_argument(
+        "--out", default="syntheticdataset_soulx", help="flat training dir (stage mode)"
+    )
     args = parser.parse_args(argv)
+
+    if args.mode == "stage":
+        return stage(args.run_ids, Path(args.out))
 
     run_dir = Path(args.run_dir) if args.run_dir else REPO / "out" / args.run_id
     archive = Path(args.archive) if args.archive else REPO / "datasets" / args.run_id
-
     if args.mode == "pack":
         return pack(run_dir, archive)
     return unpack(archive, run_dir)
