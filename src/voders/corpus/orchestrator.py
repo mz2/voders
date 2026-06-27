@@ -8,6 +8,7 @@ lane, and the voice-conversion (US2), augmentation (US3), and SVS (US4) lanes pl
 from __future__ import annotations
 
 import glob
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -66,6 +67,23 @@ class Orchestrator:
         self.accompanist = accompanist
         self.config_hash = config_hash(config)
         self._lyric_source = self._build_lyric_source(config)
+        self._source_cache: dict[Path, tuple[str, str]] = {}
+
+    def _score_provenance(self, ps: ParsedScore) -> dict[str, str]:
+        """External-source license tag for a score, from a ``_source.json`` sidecar (issue #9).
+
+        Cached per score directory; empty for hand-built/generated scores with no sidecar.
+        """
+        d = ps.source_path.parent
+        if d not in self._source_cache:
+            sidecar = d / "_source.json"
+            if sidecar.is_file():
+                meta = json.loads(sidecar.read_text(encoding="utf-8"))
+                self._source_cache[d] = (str(meta.get("source", "")), str(meta.get("license", "")))
+            else:
+                self._source_cache[d] = ("", "")
+        source, lic = self._source_cache[d]
+        return {"score_source": source, "score_license": lic}
 
     @staticmethod
     def _build_lyric_source(config: RunConfig) -> LyricSourceProtocol | None:
@@ -347,6 +365,7 @@ class Orchestrator:
             config_hash=self.config_hash,
             verdict=out.verdict,
             accompaniment=out.provenance,
+            **self._score_provenance(ps),
         )
         record = self.store.write_accompaniment_sample(
             record, out.mix, score_tsv, index, stem=out.stem
@@ -414,6 +433,8 @@ class Orchestrator:
             lyric_articulated=base.lyric_articulated,
             lyric_multisyllable_supplied=base.lyric_multisyllable_supplied,
             lyric_language=base.lyric_language,
+            score_source=base.score_source,
+            score_license=base.score_license,
         )
         record = self.store.write_sample(record, audio, score_tsv, index)
         manifest.append(record)
@@ -537,6 +558,7 @@ class Orchestrator:
             notes=result.notes,
             **self._aug_lineage(variant, dynamics_applied=dynamics_applied),
             **self._lyric_fields(plan, result),
+            **self._score_provenance(ps),
         )
         record = self.store.write_sample(record, result.audio, score_tsv, index)
         manifest.append(record)
