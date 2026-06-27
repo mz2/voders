@@ -110,6 +110,16 @@ class DynamicAugmentor:
         self._rng: np.random.Generator | None = None
         self._validator = None
 
+    @property
+    def requires_main_process(self) -> bool:
+        """True when augmentation must run in the main process (num_workers=0).
+
+        Only GPU f0 validation (crepe_f0, or auto when torchcrepe/CUDA is present) needs this,
+        to avoid the fork-after-CUDA deadlock. Without validation, or with CPU pyin, the
+        augmentation is fork-safe and can run in parallel DataLoader workers.
+        """
+        return self.validate and self.f0_method in ("crepe_f0", "auto")
+
     def _ensure_rng(self) -> np.random.Generator:
         if self._rng is None:
             try:

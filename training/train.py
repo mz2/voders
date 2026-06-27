@@ -515,12 +515,17 @@ def main():
             augment_prob=args.augment_prob,
             seed=args.seed,
         )
+        worker_note = (
+            "train loader forced to num_workers=0 (GPU validation runs in the main process)"
+            if augmentor.requires_main_process
+            else f"train loader keeps num_workers={args.num_workers} (CPU-only augmentation)"
+        )
         print(
             f"Dynamic augmentation ON: {len(profiles)} profiles "
             f"({', '.join(augmentor.profile_ids)}); "
             f"validate={args.augment_validate} ({args.augment_f0_method}), "
             f"retries={args.augment_max_retries}, prob={args.augment_prob}. "
-            f"Train loader forced to num_workers=0 (GPU validation runs in the main process)."
+            f"{worker_note}."
         )
 
     print("Loading training dataset...")
@@ -553,11 +558,15 @@ def main():
             }
         return {}
 
-    # Dynamic augmentation validates with torchcrepe on the GPU inside __getitem__, so the
-    # train loader must run in the main process (num_workers=0) — forking workers after CUDA
-    # init is the deadlock fixed in #24. Validation/test loaders carry no augmentor and keep
-    # their CPU workers.
-    train_num_workers = 0 if augmentor is not None else args.num_workers
+    # When augmentation validates with torchcrepe on the GPU inside __getitem__, the train
+    # loader must run in the main process (num_workers=0) — forking workers after CUDA init is
+    # the deadlock fixed in #24. CPU-only augmentation (no validation, or pyin) is fork-safe
+    # and keeps its workers. Validation/test loaders carry no augmentor.
+    train_num_workers = (
+        0
+        if (augmentor is not None and augmentor.requires_main_process)
+        else args.num_workers
+    )
 
     train_loader = DataLoader(
         train_dataset,
