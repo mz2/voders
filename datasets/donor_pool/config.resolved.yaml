@@ -1,0 +1,149 @@
+augmentation_profiles:
+- params:
+    reverb_decay_s: 0.08
+    reverb_wet: 0.08
+  profile_id: room_reverb
+  steps:
+  - reverb_ir
+- params:
+    bitrate_kbps: 24.0
+  profile_id: phone_codec
+  steps:
+  - codec
+- params:
+    bitrate_kbps: 32.0
+    snr_db:
+    - 18.0
+    - 24.0
+  profile_id: noisy_codec
+  steps:
+  - codec
+  - accompaniment_mix
+lanes:
+  augmentation:
+    enabled: true
+  deterministic:
+    enabled: true
+    synth: world
+master_seed: 20260627
+output_root: out/donor_pool
+reproduction:
+  deterministic: bit_exact
+  neural:
+    f0_cents: 25.0
+    onset_ms: 10.0
+    same_verdict: true
+run_id: donor_pool
+scores: evals/fixtures/scores/*.tsv
+validator:
+  f0_cents: 25.0
+  f0_coverage: 0.8
+  f0_device: auto
+  f0_method: pyin_f0
+  min_note_ms: null
+  min_note_percentile: 1.0
+  offset_fraction: 0.2
+  offset_min_ms: 50.0
+  onset_ms: 50.0
+  snr_floor_db: 0.0
+voices:
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 synthetic vowel
+  model_ref: evals/fixtures/voices/donor_ah_synth.wav
+  voice_id: donor_ah_synth
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 synthetic vowel
+  model_ref: evals/fixtures/voices/donor_oo_synth.wav
+  voice_id: donor_oo_synth
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_211494_choir_aah_wav.wav
+  voice_id: freesound_211494_choir_aah_wav
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_413713_voice_choir_oooh_wav.wav
+  voice_id: freesound_413713_voice_choir_oooh_wav
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_444491_short_choir.wav
+  voice_id: freesound_444491_short_choir
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_508325_female_vocal_single_note_a__x__wav.wav
+  voice_id: freesound_508325_female_vocal_single_note_a__x__wav
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_508326_female_vocal_single_note_a__0__wav.wav
+  voice_id: freesound_508326_female_vocal_single_note_a__0__wav
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_508349_female_vocal_single_note_c__0__wav.wav
+  voice_id: freesound_508349_female_vocal_single_note_c__0__wav
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_508813_female_vocal_03_wav.wav
+  voice_id: freesound_508813_female_vocal_03_wav
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_628795_voc_snippets_1_note__3__wav.wav
+  voice_id: freesound_628795_voc_snippets_1_note__3__wav
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_628796_voc_snippets_1_note__2__wav.wav
+  voice_id: freesound_628796_voc_snippets_1_note__2__wav
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_763889_crwdsing_i_vowel_sung_near_f_03_shanevin.wav
+  voice_id: freesound_763889_crwdsing_i_vowel_sung_near_f_03_shanevin
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_763909_crwdsing_ahh_vowel_sung_near_f_01_shanev.wav
+  voice_id: freesound_763909_crwdsing_ahh_vowel_sung_near_f_01_shanev
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_764003_crwdsing_ahh_vowel_sung_near_f_02_shanev.wav
+  voice_id: freesound_764003_crwdsing_ahh_vowel_sung_near_f_02_shanev
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_764007_crwdsing_i_ih_vowel_sung_near_f_02_shane.wav
+  voice_id: freesound_764007_crwdsing_i_ih_vowel_sung_near_f_02_shane
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_764015_crwdsing_u_ooh_vowel_sung_near_f_02_shan.wav
+  voice_id: freesound_764015_crwdsing_u_ooh_vowel_sung_near_f_02_shan
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_764017_crwdsing_uh_vowel_sung_near_f_02_shanevi.wav
+  voice_id: freesound_764017_crwdsing_uh_vowel_sung_near_f_02_shanevi
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_764111_crwdsing_ahh_vowel_sung_near_f_01_shanev.wav
+  voice_id: freesound_764111_crwdsing_ahh_vowel_sung_near_f_01_shanev
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_764221_crwdsing_ahh_vowel_sung_near_f_02_shanev.wav
+  voice_id: freesound_764221_crwdsing_ahh_vowel_sung_near_f_02_shanev
+- consent_verified: true
+  kind: deterministic_donor
+  license: CC0 1.0 (Freesound)
+  model_ref: models/donors/freesound/freesound_764330_crwdsing_ahh_vowel_sung_near_f_02_shanev.wav
+  voice_id: freesound_764330_crwdsing_ahh_vowel_sung_near_f_02_shanev

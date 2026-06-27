@@ -224,6 +224,15 @@ consented models, so they are exercised by the dedicated `just demo-svs-nnsvs`, 
 | `out/donor_pool/stats.json` | aggregate stats (counts, timbre identities, augmentation coverage, pitch/duration distributions) |
 | `out/donor_pool/config.resolved.yaml` | the resolved run config (hashed into the manifest for replay) |
 
+**Committed OGG archive (skip regeneration).** Rendering the corpus takes a while, so the accepted
+audio is also archived under **`datasets/donor_pool/`** as OGG/Vorbis (~17× smaller than float32 WAV;
+versioned via Git LFS), alongside the verbatim `*.tsv` labels, `manifest.jsonl`, `stats.json`, and
+`config.resolved.yaml`. `just pack-corpus` builds the archive from `out/donor_pool/` (run it after
+`just augment`, then commit `datasets/`); `just unpack-corpus` decompresses it back to WAV at the
+exact `out/donor_pool/corpus/.../*.wav` paths the renderer uses. `just train` auto-unpacks when the
+corpus isn't already rendered, so training needs no regeneration. OGG is lossy, so a round-trip is
+not bit-exact (use `just augment` for bit-exact reproduction); the labels and provenance are exact.
+
 **Zero-shot voice conversion (modern, no per-voice training).** `just demo-seedvc` runs **Seed-VC**
 (diffusion zero-shot VC) out-of-process (`backends/seedvc`, Python 3.10): the target voice is just a
 reference clip (a consented donor), no `.pth`. It keeps the source pitch (`--f0-condition`), so the

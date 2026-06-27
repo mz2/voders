@@ -74,9 +74,19 @@ augment FETCH="1" FREESOUND_COUNT="5" pool="evals/fixtures/donor_pool.yaml" mani
     uv run voders eval --manifest {{manifest}}
     uv run voders stats --manifest {{manifest}}
 
-# Stub for model training on the augmented corpus. Wire in the real trainer where marked.
+# Pack the rendered corpus into a committable OGG archive (~17x smaller, LFS) under datasets/<run_id>/.
+pack-corpus RUN_ID="donor_pool": setup
+    uv run --extra cpu python evals/corpus_archive.py pack --run-id {{RUN_ID}}
+
+# Decompress the committed OGG archive back to WAV at out/<run_id>/corpus/ for the training task.
+unpack-corpus RUN_ID="donor_pool": setup
+    uv run --extra cpu python evals/corpus_archive.py unpack --run-id {{RUN_ID}}
+
+# Stub for model training on the augmented corpus. Decompresses the committed OGG archive first if
+# the corpus isn't already rendered, so training needs no re-generation. Wire in the real trainer.
 train manifest="out/donor_pool/manifest.jsonl": setup
-    @test -f {{manifest}} || { echo "no manifest at {{manifest}} — run 'just augment' first" >&2; exit 1; }
+    @test -f {{manifest}} || just unpack-corpus
+    @test -f {{manifest}} || { echo "no manifest at {{manifest}} and no archive to unpack" >&2; exit 1; }
     @echo "[train stub] augmented corpus: $(wc -l < {{manifest}}) clip(s) in {{manifest}}"
     @echo "[train stub] TODO: invoke the real training entrypoint here (e.g. uv run voders train ...)."
 

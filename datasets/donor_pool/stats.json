@@ -1,0 +1,30 @@
+{
+  "accepted": 759,
+  "augmentation_coverage": 0.7457180500658761,
+  "by_status": {
+    "accepted": 759,
+    "rejected": 20
+  },
+  "duration_ms_distribution": {
+    "count": 3795,
+    "max": 450.00000000000017,
+    "mean": 450.0,
+    "median": 450.0,
+    "min": 449.99999999999994,
+    "p25": 449.99999999999994,
+    "p75": 450.00000000000017
+  },
+  "pitch_distribution": {
+    "count": 3795,
+    "max": 72.0,
+    "mean": 64.31620553359684,
+    "median": 64.0,
+    "min": 55.0,
+    "p25": 60.0,
+    "p75": 67.0
+  },
+  "timbre_identities": 80,
+  "total_samples": 779,
+  "unique_scores": 10,
+  "unique_voices": 20
+}
