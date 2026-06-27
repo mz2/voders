@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-exec python3 -m training.train \
+exec uv run --extra training python -m training.train \
     --train-dataset Synthetic \
     --train-path syntheticdataset_soulx \
     --val-dataset Klangio \
