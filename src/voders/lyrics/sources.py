@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from voders.lyrics.models import LyricPlan, LyricSource
+from voders.lyrics.models import LyricModel, LyricPlan, LyricSource
 from voders.lyrics.sampler import load_inventory, sample_syllables
+from voders.lyrics.syllabify import syllable_count
 from voders.seeds import sample_seed
 
 if TYPE_CHECKING:
@@ -63,6 +64,35 @@ class VowelSource:
         )
 
 
+class SuppliedSource:
+    """Operator-supplied lyrics carried on the score's notes (US1, FR-002).
+
+    Reads ``note.lyric`` for each note. Cells are taken **as authored** (FR-019): a cell that is not
+    a single syllable is *flagged* in ``multisyllable_notes`` (surfaced in provenance/stats) but is
+    never re-segmented, truncated, or rejected. CPU-only (FR-005).
+    """
+
+    name = "supplied"
+
+    def __init__(self, syllabifier: str = "en_rule") -> None:
+        self._syllabifier = syllabifier
+
+    def requires_gpu(self) -> bool:
+        return False
+
+    def resolve(self, score: Score, *, master_seed: int, voice_id: str) -> LyricPlan:
+        syllables: list[str | None] = [n.lyric for n in score.notes]
+        multisyllable = [
+            i for i, s in enumerate(syllables) if s and syllable_count(s) != 1
+        ]
+        return LyricPlan.build(
+            score.score_id,
+            LyricSource.SUPPLIED,
+            syllables,
+            multisyllable_notes=multisyllable,
+        )
+
+
 class AutomaticSource:
     """Seed-deterministic CV-syllable source needing no input data (US2, FR-003/FR-004).
 
@@ -86,15 +116,30 @@ class AutomaticSource:
         return LyricPlan.build(score.score_id, LyricSource.AUTOMATIC, list(syllables))
 
 
-def resolve_source(config_source: str | LyricSource) -> LyricSourceProtocol:
-    """Return the source implementation for a config selector (the registry seam).
+def build_source(
+    config_source: str | LyricSource,
+    *,
+    inventory: str = "en_cv",
+    syllabifier: str = "en_rule",
+    theme: str | None = None,
+    model: LyricModel | None = None,
+    cache_dir: str = "lyrics",
+    output_root: str | None = None,
+) -> LyricSourceProtocol:
+    """Construct the source for a config selector, threading the relevant ``LyricsConfig`` params.
 
-    ``vowel`` and ``automatic`` are implemented here; ``supplied``/``generated`` land in later
-    stories.
+    ``vowel``/``supplied``/``automatic`` are CPU; ``generated`` lands in US4 (raises until then).
     """
     source = LyricSource(config_source)
     if source is LyricSource.VOWEL:
         return VowelSource()
+    if source is LyricSource.SUPPLIED:
+        return SuppliedSource(syllabifier=syllabifier)
     if source is LyricSource.AUTOMATIC:
-        return AutomaticSource()
+        return AutomaticSource(inventory=inventory)
     raise NotImplementedError(f"lyric source {source.value} not implemented yet")
+
+
+def resolve_source(config_source: str | LyricSource) -> LyricSourceProtocol:
+    """Return the default-configured source for a selector (the registry seam, back-compat)."""
+    return build_source(config_source)

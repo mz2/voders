@@ -23,6 +23,9 @@ class RenderRequest:
     voice: Voice
     seed: int
     options: dict[str, object] = field(default_factory=dict)
+    # Optional per-note syllables resolved by the lyric layer (FR-006). ``None`` (or a ``None``
+    # entry) means open-vowel for that note. Only the SVS lane articulates; other lanes ignore them.
+    lyrics: list[str | None] | None = None
 
 
 @dataclass

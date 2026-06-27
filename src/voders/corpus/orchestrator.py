@@ -14,6 +14,8 @@ from pathlib import Path
 from voders.config.loader import config_hash, write_resolved
 from voders.config.models import RunConfig
 from voders.corpus.store import CorpusStore
+from voders.lyrics.models import LyricPlan, LyricSource
+from voders.lyrics.sources import LyricSourceProtocol, build_source
 from voders.manifest.io import ManifestWriter
 from voders.manifest.models import ProvenanceRecord, ValidationVerdict, VerdictStatus
 from voders.render.augmentor import Augmentor
@@ -59,6 +61,51 @@ class Orchestrator:
         self.timing = timing or self._default_timing(config, lanes)
         self.augmentor = augmentor
         self.config_hash = config_hash(config)
+        self._lyric_source = self._build_lyric_source(config)
+
+    @staticmethod
+    def _build_lyric_source(config: RunConfig) -> LyricSourceProtocol | None:
+        """Build the lyric source once, or ``None`` for the default ``vowel`` (lyric-free) run.
+
+        A ``vowel`` run never resolves lyrics, so output stays byte-identical to pre-feature
+        (SC-001) and the manifest's lyric axis keeps its inert defaults.
+        """
+        if config.lyrics.source == LyricSource.VOWEL:
+            return None
+        return build_source(
+            config.lyrics.source,
+            inventory=config.lyrics.inventory,
+            syllabifier=config.lyrics.syllabifier,
+            theme=config.lyrics.theme,
+            model=config.lyrics.model,
+            cache_dir=config.lyrics.cache_dir,
+            output_root=config.output_root,
+        )
+
+    def _lyric_plan(self, score: ParsedScore | None, voice: Voice) -> LyricPlan | None:
+        """Resolve the per-(score, voice) lyric plan, or ``None`` for a ``vowel`` run."""
+        if self._lyric_source is None or score is None:
+            return None
+        return self._lyric_source.resolve(
+            score.score, master_seed=self.config.master_seed, voice_id=voice.voice_id
+        )
+
+    @staticmethod
+    def _lyric_fields(plan: LyricPlan | None, result: RenderResult | None) -> dict[str, object]:
+        """Provenance lyric axis for a plan (empty => the record keeps vowel-default fields)."""
+        if plan is None:
+            return {}
+        articulated = bool(result.notes.get("lyric_articulated", False)) if result else False
+        fields: dict[str, object] = {
+            "lyric_source": plan.source.value,
+            "lyric_hash": plan.text_hash,
+            "lyric_articulated": articulated,
+            "lyric_multisyllable_supplied": len(plan.multisyllable_notes),
+        }
+        if plan.model is not None:
+            fields["lyric_model"] = plan.model.model_id
+            fields["lyric_model_license"] = plan.model.license
+        return fields
 
     @staticmethod
     def _default_timing(config: RunConfig, lanes: dict[str, RendererLane]) -> TimingRegistry:
@@ -209,6 +256,12 @@ class Orchestrator:
             consent_verified=voice.consent_verified,
             config_hash=self.config_hash,
             verdict=verdict,
+            lyric_source=base.lyric_source,
+            lyric_hash=base.lyric_hash,
+            lyric_model=base.lyric_model,
+            lyric_model_license=base.lyric_model_license,
+            lyric_articulated=base.lyric_articulated,
+            lyric_multisyllable_supplied=base.lyric_multisyllable_supplied,
         )
         record = self.store.write_sample(record, audio, score_tsv, index)
         manifest.append(record)
@@ -251,7 +304,13 @@ class Orchestrator:
             manifest.append(record)
             return record, None
 
-        result = lane.render(RenderRequest(score=ps.score, voice=voice, seed=seed, options=options))
+        plan = self._lyric_plan(ps, voice)
+        lyrics = plan.syllables if plan is not None else None
+        result = lane.render(
+            RenderRequest(
+                score=ps.score, voice=voice, seed=seed, options=options, lyrics=lyrics
+            )
+        )
         verdict = validator.validate(result.audio, result.label_score)
         lane_dev = result.notes.get("max_onset_dev_ms", 0.0)
         verdict = verdict.model_copy(
@@ -292,6 +351,7 @@ class Orchestrator:
             config_hash=self.config_hash,
             verdict=verdict,
             notes=result.notes,
+            **self._lyric_fields(plan, result),
         )
         record = self.store.write_sample(record, result.audio, score_tsv, index)
         manifest.append(record)
