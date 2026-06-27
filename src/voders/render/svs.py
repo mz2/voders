@@ -10,7 +10,7 @@ safety modes (FR-007, research Decision 3):
 * ``rederive_labels``: render *expressively* by humanizing the note timing with a seeded jitter,
   then RE-DERIVE the note onsets/offsets from the actually-rendered audio (a forced-alignment /
   onset-detection analogue) and carry the re-derived score; if any onset drifts past 50 ms the
-  sample is forced REJECTED so the orchestrator drops it (SC-010).
+  sample is forced REJECTED so the orchestrator drops it (SC-002).
 
 Backends (``options["backend"]``):
 
@@ -33,8 +33,11 @@ from voders.seeds import rng
 _CPU_BACKENDS = frozenset({"cpu"})
 _SUBPROCESS_BACKENDS = frozenset({"nnsvs"})  # out-of-process, own uv project
 _GPU_BACKENDS = frozenset({"diffsinger"})  # in-process GPU
+# Backends that can sing real phonemes from per-note syllables (FR-006). The ``cpu`` stand-in sings
+# an open vowel and does NOT articulate, so it never sets ``lyric_articulated``.
+_ARTICULATING_BACKENDS = _SUBPROCESS_BACKENDS | _GPU_BACKENDS
 _DEFAULT_HUMANIZE_MS = 20.0
-_ONSET_TOLERANCE_MS = 50.0  # SC-010
+_ONSET_TOLERANCE_MS = 50.0  # SC-002
 
 
 class SvsLane:
@@ -68,9 +71,10 @@ class SvsLane:
         mode = str(self._opt(req, "mode", "force_score_f0"))
         if mode == "force_score_f0":
             audio = self._render_audio(req, req.score, backend)
-            return RenderResult(
-                audio=audio, label_score=req.score, notes={"mode": mode, "backend": backend}
-            )
+            notes: dict[str, object] = {"mode": mode, "backend": backend}
+            if self._articulated(req, backend):
+                notes["lyric_articulated"] = True
+            return RenderResult(audio=audio, label_score=req.score, notes=notes)
         if mode == "rederive_labels":
             raw = self._opt(req, "humanize_ms", _DEFAULT_HUMANIZE_MS)
             humanize_ms = float(raw) if isinstance(raw, int | float | str) else _DEFAULT_HUMANIZE_MS
@@ -78,6 +82,38 @@ class SvsLane:
         raise ValueError(
             f"unknown SVS mode {mode!r}; expected 'force_score_f0' or 'rederive_labels'"
         )
+
+    @staticmethod
+    def _articulated(req: RenderRequest, backend: str) -> bool:
+        """True only when real phonemes are sung: lyrics present + articulating backend (FR-006).
+
+        The ``cpu`` stand-in sings an open vowel regardless of lyrics, so it never articulates.
+        """
+        has_lyrics = req.lyrics is not None and any(s for s in req.lyrics)
+        return has_lyrics and backend in _ARTICULATING_BACKENDS
+
+    @staticmethod
+    def _phoneme_payload(req: RenderRequest, score: Score) -> list[dict] | None:
+        """Core-side G2P (espeak) -> per-note phoneme runs for the backend to articulate (L3).
+
+        Returns ``None`` when there are no lyrics (open-vowel render). Lazily imports the G2P module
+        so the CPU baseline never loads phonemizer/espeak (FR-005).
+        """
+        if not (req.lyrics is not None and any(s for s in req.lyrics)):
+            return None
+        from voders.lyrics.g2p import phoneme_runs
+
+        runs = phoneme_runs(req.lyrics, score, backend=req.g2p_backend, language=req.language)
+        return [
+            {
+                "note_index": r.note_index,
+                "phonemes": r.phonemes,
+                "lead": r.lead_consonants,
+                "tail": r.tail_consonants,
+                "nucleus_onset_s": r.nucleus_onset_s,
+            }
+            for r in runs
+        ]
 
     def _render_audio(self, req: RenderRequest, score: Score, backend: str) -> np.ndarray:
         """Render audio for ``score`` with the selected backend (in-process or out-of-process)."""
@@ -90,6 +126,8 @@ class SvsLane:
                 score,
                 req.seed,
                 model_ref=req.voice.model_ref,
+                lyrics=req.lyrics,
+                phonemes=self._phoneme_payload(req, score),
             )
         from voders.render.deterministic import DeterministicLane
 
@@ -114,11 +152,13 @@ class SvsLane:
             "humanize_ms": humanize_ms,
             "max_onset_dev_ms": max_dev_ms,
         }
+        if self._articulated(req, backend):
+            notes["lyric_articulated"] = True
         if max_dev_ms > _ONSET_TOLERANCE_MS:
             notes["force_status"] = "rejected"
             notes["reject_reason"] = (
                 f"re-derived onset deviation {max_dev_ms:.1f} ms exceeds "
-                f"{_ONSET_TOLERANCE_MS:.0f} ms tolerance (SC-010)"
+                f"{_ONSET_TOLERANCE_MS:.0f} ms tolerance (SC-002)"
             )
         return RenderResult(audio=audio, label_score=rederived, notes=notes)
 

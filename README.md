@@ -60,6 +60,81 @@ Each lane is enabled or disabled independently in the run config:
 The deterministic lane and validator run on a laptop CPU with no GPU. The neural lanes
 (`svs`, `voice_conversion`) use the `gpu` extra.
 
+## Optional lyrics (phonetic diversity)
+
+Lyrics are **opt-in** and exist only to add phonetic variety (consonants, vowel transitions) the
+single open vowel "ah" lacks — they are never a corpus label. With no `lyrics` block a run is
+byte-identical to the lyric-free pipeline. Add a `lyrics` block to a run config to pick a source:
+
+```yaml
+lyrics:
+  source: automatic     # vowel (default) | supplied | automatic | generated
+  inventory: en_cv      # automatic-source style: en_cv | scat
+  g2p_backend: espeak   # espeak (CPU rules, default) | neural (byte-level T5 on GPU)
+  languages: [en-us]    # spread phonetic coverage across these (e.g. de, fr-fr, es, ja, cmn, ko)
+```
+
+**Multilingual coverage:** set `languages:` to span the languages your evaluation set covers — one is
+chosen per sample (seeded) and recorded as `lyric_language` in the manifest/stats. Per-language G2P
+(espeak, ~100 languages; or the neural byT5) gives authentic per-language phonemes; on the same
+inventory, the 12-language EU+CJK set yields ~2.7× the distinct phonemes of English alone. The
+`generated` LLM source writes real words *in each language* (native script for CJK), and the nnsvs
+`yoko` voicebank covers Japanese natively. Example: `evals/fixtures/lyrics-multilingual.yaml`.
+
+- **vowel** — default, lyric-free (open vowel).
+- **supplied** — per-note syllables carried in an optional 4th `.tsv` column (taken as authored).
+- **automatic** — a seeded, CPU, dependency-free syllable sampler. `inventory: en_cv` for neutral
+  consonant–vowel syllables, or **`inventory: scat`** for jazz **scat-singing** syllables
+  (Scatman-style "ski-ba-bop-ba-dop-bop"). Deterministic from the master seed, reproducible.
+- **generated** — themed lyrics from a real instruct **LLM** (default `Qwen2.5-0.5B-Instruct`,
+  Apache-2.0) run on GPU, segmented to one syllable per note and pinned as a cached artifact so
+  replays never re-invoke the model; an unverified model license is refused.
+
+Every source assigns **one syllable per note**. Only the **svs** lane articulates the syllables as
+phonemes (vowel-specific formants + consonant bursts at the score-derived pitch); the deterministic
+and voice-conversion lanes are unchanged. Articulation needs grapheme-to-phoneme (G2P):
+
+```bash
+sudo apt install espeak-ng        # CPU rule-based G2P (default)
+uv sync --extra lyrics            # phonemizer (lazy; CPU baseline unaffected)
+# Optional GPU upgrades:
+uv sync --extra lyrics --extra gpu --extra lyrics-gpu   # neural G2P + LLM generation on GPU
+```
+
+```bash
+just run config=evals/fixtures/lyrics-smoke.yaml   # automatic en_cv syllables (CPU)
+just run config=evals/fixtures/lyrics-scat.yaml    # scat-singing style
+just run config=evals/fixtures/lyrics-svs.yaml     # svs lane articulates the syllables (espeak G2P)
+```
+
+GPU paths (real LLM generation, neural G2P) have opt-in tests: with the gpu extras synced, run
+`uv run pytest -m gpu`. The default suite stays CPU-only so the no-GPU baseline guarantees hold.
+### Accompaniment stage (spec 002)
+
+An optional post-acceptance stage lays instrumental backing under an accepted vocal **without moving
+the sung-note timing**, so the score still labels the result. Two modes: **lego** (vocal-preserving —
+a generated accompaniment "stem" summed under the untouched vocal; the vocal stays bit-exact and the
+stem is kept for re-mixing) and **complete** (one-pass full mix, mild vocal coloration). Admission is
+decided on the final mix. Enable it via the `accompaniment` lane in a run config. The CPU **fake** backend runs in CI:
+
+```bash
+uv run voders run  --config evals/fixtures/accompaniment-smoke.yaml   # fake backend, no GPU
+uv run voders eval --manifest out/accompaniment_smoke/manifest.jsonl  # SC-001/002/004/005/008
+```
+
+The real **ACE-Step** backend (`ACE-Step/ACE-Step-v1-3.5B`, Apache-2.0) runs on GPU. It can't share
+this project's environment (conflicting pins, no Python 3.14 / aarch64 wheels), so — like the SVS /
+RVC / Seed-VC backends — it lives as a standalone uv project under `backends/acestep/` and is invoked
+out-of-process. Set it up and run an end-to-end demo with the task runner:
+
+```bash
+just setup-acestep-backend   # uv sync --project backends/acestep
+just setup-accomp            # Demucs for Lego separation (uv sync --extra cpu --extra accomp)
+just demo-acestep            # real ACE-Step accompaniment on a fixture vocal, then eval
+```
+
+See `specs/002-vocal-conditioned-accompaniment/quickstart.md`.
+
 ## Quickstart
 
 Everything is driven by a [`just`](https://github.com/casey/just) task runner; each action goes

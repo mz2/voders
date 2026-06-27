@@ -1,0 +1,41 @@
+# Accompaniment smoke run — deterministic vocals + the accompaniment stage (fake backend, CPU).
+# Lays a Lego accompaniment stem under each accepted deterministic vocal. No GPU required
+# (Constitution IV, FR-009). Switch backend to `acestep` + mode as desired for the real model.
+run_id: accompaniment_smoke
+master_seed: 20260627
+
+scores: evals/fixtures/scores/*.tsv
+output_root: out/accompaniment_smoke
+
+voices:
+  - voice_id: donor_ah_synth
+    kind: deterministic_donor
+    license: "CC0 synthetic vowel"
+    consent_verified: true
+    model_ref: evals/fixtures/voices/donor_ah_synth.wav
+
+lanes:
+  deterministic:
+    enabled: true
+    synth: world
+  accompaniment:
+    enabled: true
+    mode: lego                       # lego (vocal-preserving) | complete (one-pass)
+    backend: fake                    # fake (CPU/CI) | acestep (GPU, `accomp` extra)
+    model_id: fake-accompaniment
+    license_policy: [MIT, Apache-2.0, CC-BY-4.0]
+    target_instrument: "sustained pad"
+    free_time: true
+    bpm: null
+    takes: 3
+    target_snr_db: [9, 12, 15]
+
+validator:
+  onset_ms: 50
+  offset_min_ms: 50
+  offset_fraction: 0.20
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0

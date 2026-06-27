@@ -1,0 +1,57 @@
+# Scat-singing syllable inventory (jazz vocalese / Scatman-style), selectable via
+# `lyrics.inventory: scat` on the automatic source. Each entry is a single singable syllable
+# (one vowel group) so one-syllable-per-note holds (FR-019). Nonsense by design — pure phonetic
+# diversity (consonant onsets + vowel nuclei the open vowel "ah" lacks), never a corpus label.
+# Flavour: Scatman John, "Ski-Ba-Bop-Ba-Dop-Bop".
+
+# ski-ba-bop-ba-dop-bop core
+ski
+skee
+ska
+sko
+skat
+ba
+be
+bi
+bo
+bu
+bop
+bap
+bip
+bup
+bam
+da
+de
+di
+do
+du
+dop
+dat
+dit
+doo
+doot
+dum
+dwee
+dwa
+dee
+shoo
+sha
+shu
+shi
+wee
+wa
+wo
+ya
+yo
+za
+zee
+zat
+zoo
+blee
+vlee
+klop
+koo
+loo
+mwee
+bee
+boo

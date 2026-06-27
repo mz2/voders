@@ -1,0 +1,32 @@
+# Lyric-augmented training set: the fixture scores sung with real NNSVS voices (female/male/tenor
+# characters, natural timbre) plus a multilingual formant-articulated voice, with scat syllables and
+# a EU+CJK language spread for phonetic diversity. Pitch-locked so labels stay score-exact. Packs to
+# datasets/lyrics_pool/ as the committed augmented corpus.
+run_id: lyrics_pool
+master_seed: 20260627
+
+scores: evals/fixtures/scores/*.tsv
+output_root: out/lyrics_pool
+
+voices:
+  - {voice_id: female, kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:female"}
+  - {voice_id: male,   kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:male"}
+  - {voice_id: tenor,  kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:tenor"}
+  - {voice_id: multi,  kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: evals/fixtures/voices/donor_ah_synth.wav}
+
+lanes:
+  svs: {enabled: true, backend: nnsvs, mode: force_score_f0}
+
+lyrics:
+  source: automatic
+  inventory: scat
+  g2p_backend: espeak
+  languages: [en-us, de, fr-fr, es, it, ja, ko]
+
+validator:
+  onset_ms: 50
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0

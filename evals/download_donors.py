@@ -84,13 +84,87 @@ def _save(arr: np.ndarray, sr: int, dest: Path) -> None:
     print(f"  wrote {dest} ({arr.size / SAMPLE_RATE:.1f} s @ {SAMPLE_RATE} Hz)")
 
 
+_VOCALSET_REPO = "Bill13579/vocalset-mirror"
+
+
+def _vocalset_singers(n: int):  # noqa: ANN202
+    """Yield ``(label, arr, sr)`` for up to ``n`` distinct VocalSet singers.
+
+    VocalSet is ~20 professional singers; the mirror's parquet ``label`` column is the singer id.
+    Reads the parquet shards directly (fast — the audio bytes are embedded) and takes the first clip
+    per distinct ``label`` until ``n`` singers are collected.
+    """
+    import io
+
+    import fsspec
+    import pyarrow.parquet as pq
+    from huggingface_hub import list_repo_files
+
+    shards = sorted(
+        f for f in list_repo_files(_VOCALSET_REPO, repo_type="dataset") if f.endswith(".parquet")
+    )
+    seen: set[int] = set()
+    for shard in shards:
+        if len(seen) >= n:
+            return
+        pf = pq.ParquetFile(fsspec.open(f"hf://datasets/{_VOCALSET_REPO}/{shard}").open())
+        for rg in range(pf.num_row_groups):
+            tbl = pf.read_row_group(rg, columns=["audio", "label"])
+            labels = tbl.column("label").to_pylist()
+            if set(labels) <= seen:  # nothing new in this group — skip the audio decode
+                continue
+            audio = tbl.column("audio").to_pylist()
+            for a, lab in zip(audio, labels, strict=False):
+                lab = int(lab)
+                if lab in seen or not isinstance(a, dict) or not a.get("bytes"):
+                    continue
+                arr, sr = sf.read(io.BytesIO(a["bytes"]), dtype="float32", always_2d=False)
+                arr = np.asarray(arr, dtype=np.float32)
+                if arr.ndim == 2:
+                    arr = arr.mean(axis=1)
+                if arr.size == 0:
+                    continue
+                seen.add(lab)
+                yield lab, arr, sr
+                if len(seen) >= n:
+                    return
+
+
+def _vocalset_dest(label: int) -> Path:
+    """Singer 0 keeps the historical ``vocalset_singer.wav`` name; others are ``vocalset_NN``."""
+    return DONORS_ROOT / ("vocalset_singer.wav" if label == 0 else f"vocalset_{label:02d}.wav")
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = sys.argv[1:] if argv is None else argv
-    which = args or _DEFAULT
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Fetch permissively-licensed donor voices")
+    parser.add_argument("sources", nargs="*", help="donor sources to fetch (default: vocalset)")
+    parser.add_argument(
+        "--vocalset-singers",
+        type=int,
+        default=1,
+        help="enroll this many distinct VocalSet singers (one clip each; ~20 available)",
+    )
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    which = args.sources or _DEFAULT
+
     for name in which:
         if name not in SOURCES:
             print(f"unknown donor source {name!r}; known: {sorted(SOURCES)}")
             return 2
+        if name == "vocalset" and args.vocalset_singers > 1:
+            print(f"== vocalset: enrolling up to {args.vocalset_singers} distinct singers ==")
+            enrolled = 0
+            for label, arr, sr in _vocalset_singers(args.vocalset_singers):
+                dest = _vocalset_dest(label)
+                enrolled += 1
+                if dest.exists():
+                    print(f"  singer {label}: exists, skipping {dest.name}")
+                    continue
+                _save(arr, sr, dest)
+            print(f"== vocalset: {enrolled} singer(s) enrolled under {DONORS_ROOT} ==")
+            continue
         dataset_id, split, out = SOURCES[name]
         dest = DONORS_ROOT / out
         if dest.exists():

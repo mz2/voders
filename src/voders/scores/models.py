@@ -15,6 +15,9 @@ class Note(BaseModel):
     onset_s: float = Field(ge=0.0)
     offset_s: float
     pitch_midi: int = Field(ge=0, le=127)
+    # Optional lyric/syllable for this note (None = lyric-free; the lanes default to an open vowel).
+    # Lyric-driven SVS (G2P + a voicebank) is the work this `lyrics` branch builds on top of.
+    lyric: str | None = None
 
     @property
     def duration_s(self) -> float:

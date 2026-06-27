@@ -60,7 +60,10 @@ def parse_tsv(path: str | Path, *, allow_split: bool = False) -> ParsedScore:
         except ValueError:
             # Header or comment row — skip.
             continue
-        notes.append(Note(onset_s=onset, offset_s=offset, pitch_midi=pitch))
+        # Optional 4th column: a per-note lyric/syllable (backward-compatible — 3-column scores
+        # parse exactly as before, lyric=None).
+        lyric = cols[3].strip() if len(cols) >= 4 and cols[3].strip() else None
+        notes.append(Note(onset_s=onset, offset_s=offset, pitch_midi=pitch, lyric=lyric))
 
     score = Score(score_id=p.stem, source=str(p), notes=notes)
 
@@ -77,7 +80,14 @@ def parse_tsv(path: str | Path, *, allow_split: bool = False) -> ParsedScore:
 def serialize_score(score: Score) -> bytes:
     """Canonical ``.tsv`` serialization (used for re-derived labels, FR-007).
 
-    Onsets/offsets are written with millisecond precision; pitch as an integer.
+    Onsets/offsets are written with millisecond precision; pitch as an integer. A 4th lyric column
+    is emitted only when at least one note carries a lyric, so lyric-free scores stay 3-column.
     """
-    lines = [f"{n.onset_s:.6f}\t{n.offset_s:.6f}\t{n.pitch_midi}" for n in score.notes]
+    has_lyrics = any(n.lyric for n in score.notes)
+    lines = []
+    for n in score.notes:
+        row = f"{n.onset_s:.6f}\t{n.offset_s:.6f}\t{n.pitch_midi}"
+        if has_lyrics:
+            row += f"\t{n.lyric or ''}"
+        lines.append(row)
     return ("\n".join(lines) + "\n").encode("utf-8")

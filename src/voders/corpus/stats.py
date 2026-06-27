@@ -63,6 +63,46 @@ def build_stats(manifest_path: str | Path) -> dict[str, Any]:
         "augmentation_coverage": (len(augmented) / len(accepted)) if accepted else 0.0,
         "pitch_distribution": _distribution(pitches),
         "duration_ms_distribution": _distribution([d * 1000.0 for d in durations]),
+        "lyrics": _lyric_stats(records, _gather_syllables(root, accepted)),
+    }
+
+
+def _gather_syllables(root: Path, records: list[ProvenanceRecord]) -> list[str | None]:
+    """Collect per-note syllables carried in each accepted record's label ``.tsv``."""
+    syllables: list[str | None] = []
+    for r in records:
+        if not r.score_path:
+            continue
+        p = root / r.score_path
+        if not p.exists():
+            continue
+        try:
+            parsed = parse_tsv(p)
+        except Exception:
+            continue
+        syllables.extend(n.lyric for n in parsed.score.notes)
+    return syllables
+
+
+def _lyric_stats(records: list[ProvenanceRecord], syllables: list[str | None]) -> dict[str, Any]:
+    """Lyric-source breakdown, supplied multi-syllable count, and phonetic coverage (FR-014).
+
+    Phonetic coverage is computed over syllables carried in the label ``.tsv`` (the ``supplied``
+    source); ``automatic``/``generated`` syllables ride in provenance/cache, so coverage there is
+    surfaced by the source-level SC-003 check rather than this manifest scan.
+    """
+    from voders.lyrics.coverage import phonetic_coverage
+
+    by_source: dict[str, int] = {}
+    by_language: dict[str, int] = {}
+    for r in records:
+        by_source[r.lyric_source] = by_source.get(r.lyric_source, 0) + 1
+        by_language[r.lyric_language] = by_language.get(r.lyric_language, 0) + 1
+    return {
+        "by_source": by_source,
+        "by_language": by_language,
+        "multisyllable_supplied_total": sum(r.lyric_multisyllable_supplied for r in records),
+        "coverage": phonetic_coverage(syllables),
     }
 
 

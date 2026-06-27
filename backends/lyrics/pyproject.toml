@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voders-lyrics-backend"
+version = "0.1.0"
+description = "Out-of-process lyric generation backend for voders (separate dependency chain)"
+# This backend hosts the constrained-decoding / SongComposer lyric model that drives the
+# model-driven "generated" lyric source (US4): given a melody it emits syllables JSON. Like the SVS
+# backend, it is intentionally a separate uv project from the 3.14 core because the lyric model's
+# toolkit (transformers/torch and friends) does not track the core's interpreter. The core would
+# invoke it across a process boundary via `uv run --project backends/lyrics`
+# (see src/voders/render/backend_bridge.py). It is NOT synced or imported by the core.
+requires-python = ">=3.11,<3.12"
+dependencies = []
+
+[project.scripts]
+voders-lyrics-backend = "voders_lyrics_backend.worker:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

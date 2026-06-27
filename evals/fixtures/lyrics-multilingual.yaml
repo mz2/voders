@@ -1,0 +1,33 @@
+# Multilingual phonetic coverage: one language chosen per sample (seeded) from the EU+CJK set, so the
+# corpus's phoneme distribution spans the languages your eval covers. Per-language espeak G2P feeds
+# the SVS articulator; lyric_language is recorded in provenance/stats. (Uses the formant articulator
+# so every language is articulated; Japanese also has a natural path via the nnsvs yoko voicebank.)
+run_id: lyrics-multilingual
+master_seed: 20260627
+
+scores: evals/fixtures/scores/*.tsv
+output_root: out/lyrics-multilingual
+
+voices:
+  - voice_id: artic
+    kind: svs_voicebank
+    license: CC0
+    consent_verified: true
+    model_ref: evals/fixtures/voices/donor_ah_synth.wav   # not an nnsvs id -> formant articulator
+
+lanes:
+  svs: {enabled: true, backend: nnsvs, mode: force_score_f0}
+
+lyrics:
+  source: automatic
+  inventory: en_cv
+  g2p_backend: espeak
+  languages: [en-us, de, fr-fr, es, it, pt, ru, nl, pl, ja, cmn, ko]
+
+validator:
+  onset_ms: 50
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0

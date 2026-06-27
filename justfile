@@ -26,9 +26,17 @@ setup:
 setup-gpu:
     uv sync --extra cpu --extra gpu
 
+# Add the accompaniment GPU extra (Demucs, for Lego-mode source separation).
+setup-accomp:
+    uv sync --extra cpu --extra accomp
+
 # Prerequisite for the out-of-process NNSVS backend: sync its standalone uv project (Python 3.11).
 setup-backends:
     uv sync --project backends/svs
+
+# Sync the out-of-process ACE-Step accompaniment backend (its own uv project, Python 3.12).
+setup-acestep-backend:
+    uv sync --project backends/acestep
 
 # Generate the checked-in fixtures (scores + synthetic consented donor voices).
 fixtures: setup
@@ -68,8 +76,8 @@ build-pool: setup
 # present), unifies them into one pool, renders the deterministic lane, fans each accepted render
 # through the augmentation profiles, then audits + evaluates + aggregates. FETCH=0 skips the network
 # fetches and runs purely on the checked-in donors (this is what the CI action uses).
-augment FETCH="1" FREESOUND_COUNT="5" pool="evals/fixtures/donor_pool.yaml" manifest="out/donor_pool/manifest.jsonl": fixtures
-    {{ if FETCH == "1" { "-uv run --extra cpu --extra donors python evals/download_donors.py" } else { "echo 'FETCH=0: using checked-in donors (no dataset download)'" } }}
+augment FETCH="1" FREESOUND_COUNT="5" VOCALSET_SINGERS="18" pool="evals/fixtures/donor_pool.yaml" manifest="out/donor_pool/manifest.jsonl": fixtures
+    {{ if FETCH == "1" { "-uv run --extra cpu --extra donors python evals/download_donors.py --vocalset-singers " + VOCALSET_SINGERS } else { "echo 'FETCH=0: using checked-in donors (no dataset download)'" } }}
     {{ if FETCH == "1" { "-uv run --extra cpu python evals/download_freesound.py --count " + FREESOUND_COUNT + " --license cc0" } else { "echo 'FETCH=0: using checked-in Freesound donors (no download)'" } }}
     rm -rf out/donor_pool
     uv run --extra cpu python evals/build_donor_pool.py --out {{pool}}
@@ -78,6 +86,20 @@ augment FETCH="1" FREESOUND_COUNT="5" pool="evals/fixtures/donor_pool.yaml" mani
     uv run voders audit --manifest {{manifest}}
     uv run voders eval --manifest {{manifest}}
     uv run voders stats --manifest {{manifest}}
+
+# Like `augment`, but ALSO lays vocal-conditioned accompaniment (spec 002) under each accepted donor
+# render — including the real VocalSet singer — as a training augmentation. BACKEND=fake is CPU/CI;
+# BACKEND=acestep uses the real GPU model (run `just setup-acestep-backend` first).
+augment-accomp BACKEND="fake" FETCH="1" FREESOUND_COUNT="5" VOCALSET_SINGERS="18" pool="evals/fixtures/donor_pool_accomp.yaml" manifest="out/donor_pool_accomp/manifest.jsonl": fixtures setup-accomp
+    {{ if FETCH == "1" { "-uv run --extra cpu --extra donors python evals/download_donors.py --vocalset-singers " + VOCALSET_SINGERS } else { "echo 'FETCH=0: using checked-in donors (no dataset download)'" } }}
+    {{ if FETCH == "1" { "-uv run --extra cpu python evals/download_freesound.py --count " + FREESOUND_COUNT + " --license cc0" } else { "echo 'FETCH=0: using checked-in Freesound donors (no download)'" } }}
+    rm -rf out/donor_pool_accomp
+    uv run --extra cpu python evals/build_donor_pool.py --accompaniment {{BACKEND}} --run-id donor_pool_accomp --out {{pool}}
+    @just list-donors
+    uv run --extra cpu --extra accomp voders run --config {{pool}}
+    uv run --extra cpu --extra accomp voders audit --manifest {{manifest}}
+    uv run --extra cpu --extra accomp voders eval --manifest {{manifest}}
+    uv run --extra cpu --extra accomp voders stats --manifest {{manifest}}
 
 # Pack the rendered corpus into a committable OGG archive (~17x smaller, LFS) under datasets/<run_id>/.
 pack-corpus RUN_ID="donor_pool": setup
@@ -127,10 +149,11 @@ setup-rvc-backend:
 download-rvc-voice: setup
     uv run python evals/download_models.py vctk-p231
 
-# Stream real donor voices (VocalSet + VCTK, CC BY 4.0) into models/donors/ (git-ignored).
-download-donors:
+# Stream real donor voices (VocalSet + VCTK, CC BY 4.0) into models/donors/. SINGERS=N enrolls N
+# distinct VocalSet singers (~20 available); the vocalset_*.wav files are versioned via LFS.
+download-donors SINGERS="1":
     uv sync --extra cpu --extra donors
-    uv run --extra cpu --extra donors python evals/download_donors.py
+    uv run --extra cpu --extra donors python evals/download_donors.py --vocalset-singers {{SINGERS}}
 
 # Fetch CC0/CC-BY donor vowels from Freesound (needs FREESOUND_API_TOKEN). QUERY=/COUNT=/LICENSE= optional.
 download-freesound QUERY="sung vowel" COUNT="3" LICENSE="cc0": setup
@@ -193,6 +216,16 @@ smoke-gpu: setup-gpu
     uv run --extra cpu --extra gpu python evals/make_fixtures.py
     uv run --extra cpu --extra gpu voders run --config evals/fixtures/smoke_gpu.yaml
     uv run --extra cpu --extra gpu voders eval --manifest out/smoke_gpu/manifest.jsonl
+
+# Lay accompaniment under the deterministic vocals with the CPU fake backend, then evaluate.
+accompaniment-smoke: setup
+    uv run voders run --config evals/fixtures/accompaniment-smoke.yaml
+    uv run voders eval --manifest out/accompaniment_smoke/manifest.jsonl
+
+# Real ACE-Step accompaniment on a vocal fixture (GPU; downloads ACE-Step weights on first run).
+demo-acestep: setup-accomp setup-acestep-backend
+    uv run --extra cpu --extra accomp voders run --config evals/fixtures/accompaniment_acestep.yaml
+    uv run --extra cpu --extra accomp voders eval --manifest out/accompaniment_acestep/manifest.jsonl
 
 # Everything CI checks: lint, type, tests.
 check: lint test

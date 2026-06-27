@@ -1,0 +1,41 @@
+# Real ACE-Step accompaniment demo (GPU). Lays a Lego accompaniment stem under one deterministic
+# vocal using the out-of-process ACE-Step backend (backends/acestep) + Demucs separation. One score
+# keeps the demo quick (the 3.5B model loads per call). `just demo-acestep` runs this then evals it.
+run_id: accompaniment_acestep
+master_seed: 20260627
+
+scores: evals/fixtures/scores/score_000.tsv
+output_root: out/accompaniment_acestep
+
+voices:
+  - voice_id: donor_ah_synth
+    kind: deterministic_donor
+    license: "CC0 synthetic vowel"
+    consent_verified: true
+    model_ref: evals/fixtures/voices/donor_ah_synth.wav
+
+lanes:
+  deterministic:
+    enabled: true
+    synth: world
+  accompaniment:
+    enabled: true
+    mode: lego                       # vocal-preserving: ACE-Step -> Demucs stem -> sum under vocal
+    backend: acestep                 # out-of-process backends/acestep (Python 3.12, Apache-2.0)
+    model_id: ace-step-v1-3.5b
+    license_policy: [MIT, Apache-2.0, CC-BY-4.0]
+    target_instrument: "deep upright bass and soft brushed drums, warm low chords"
+    free_time: true
+    bpm: null
+    takes: 2                          # pick the best-aligned of two takes
+    target_snr_db: [3, 6]             # accompaniment clearly audible, vocal still dominant
+
+validator:
+  onset_ms: 50
+  offset_min_ms: 50
+  offset_fraction: 0.20
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0
