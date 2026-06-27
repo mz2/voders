@@ -30,3 +30,13 @@ def test_import_lyrics_models_is_cpu_safe():
 
 def test_import_lyrics_sources_is_cpu_safe():
     _reimport("voders.lyrics.sources")
+
+
+def test_import_lyrics_g2p_is_cpu_safe():
+    # G2P imports phonemizer/espeak lazily inside text_to_phonemes, not at module load (FR-005).
+    _reimport("voders.lyrics.g2p")
+
+
+def test_import_lyrics_syllabify_and_cache_are_cpu_safe():
+    _reimport("voders.lyrics.syllabify")
+    _reimport("voders.lyrics.cache")

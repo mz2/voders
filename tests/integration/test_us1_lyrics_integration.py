@@ -74,6 +74,23 @@ def test_automatic_hash_is_reproducible_across_runs(tmp_path: Path, donor_ah) ->
     assert rec_a.lyric_hash == rec_b.lyric_hash
 
 
+def test_adding_lyrics_does_not_shift_pitch_or_timing(tmp_path: Path, donor_ah) -> None:
+    """SC-008/009 (differential): adding lyrics moves neither pitch nor timing of the labels.
+
+    Rendering the same (score, voice, seed) with vs without lyrics produces identical onset/offset/
+    pitch labels — the zero-shift guarantee. (The deterministic lane does not articulate, so the
+    audio-level differential is exercised by the SVS backend, which is out of process here.)
+    """
+    off = _run(_config(tmp_path / "off", donor_ah))
+    on = _run(_config(tmp_path / "on", donor_ah, LyricsConfig(source=LyricSource.AUTOMATIC)))
+    assert off[0].score_id == on[0].score_id
+    # The label .tsv (onsets/offsets/pitches) is unchanged by adding lyrics — and, since automatic
+    # syllables do not enter the label, identical to the original 3-column score.
+    tsv_off = sorted((tmp_path / "off").rglob("*.tsv"))[0].read_bytes()
+    tsv_on = sorted((tmp_path / "on").rglob("*.tsv"))[0].read_bytes()
+    assert tsv_off == tsv_on == (SCORES_DIR / "score_000.tsv").read_bytes()
+
+
 def test_supplied_run_flags_multisyllable_cells(tmp_path: Path, donor_ah) -> None:
     # A 4-column supplied score with one multi-syllable cell ("winter").
     scores_dir = tmp_path / "scores"
