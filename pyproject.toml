@@ -36,6 +36,23 @@ gpu = [
     "torchcrepe>=0.0.24",
     "vocos>=0.1",  # modern neural mel-vocoder for the deterministic lane's `vocoder: vocos` option
 ]
+# Basic Pitch training stack imported from MML26-singing-synthesis. Torch follows this project's
+# Python 3.14-compatible GPU constraint instead of the source project's older 2.8 pin.
+training = [
+    "torch>=2.12",
+    "torchvision",
+    "torchaudio",
+    "librosa",
+    "pandas",
+    "tqdm",
+    "matplotlib",
+    "mir_eval",
+    "pytorch-lightning>=2.6.5",
+    "tensorboard",
+    "wandb",
+    "nnAudio",
+    "pretty_midi",
+]
 dev = [
     "ruff>=0.15",
     "mypy>=2.1",
