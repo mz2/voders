@@ -4,11 +4,14 @@ name: train-on-augmented-corpus
 # `just train` decompresses the archive to WAV and runs the trainer — no regeneration, no artifact
 # passing. To rebuild the corpus from donors instead, run `just augment` locally and commit datasets/.
 # Runs on the repo's self-hosted, NVIDIA-GPU-equipped runner (installs the gpu extra for training).
-# Triggered manually (workflow_dispatch) or when a GitHub Release is published.
+# Triggered manually, when a GitHub Release is published, or when the `train` label is applied to
+# an issue.
 on:
   workflow_dispatch:
   release:
     types: [published]
+  issues:
+    types: [labeled]
 
 permissions:
   contents: read
@@ -16,6 +19,7 @@ permissions:
 jobs:
   train:
     name: Train (stub)
+    if: github.event_name != 'issues' || github.event.label.name == 'train'
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
