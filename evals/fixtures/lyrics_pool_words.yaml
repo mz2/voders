@@ -1,0 +1,37 @@
+# Lyrical neural-SVS batch: real multilingual words from the instruct LLM, sung by nnsvs voices,
+# segmented one-syllable-per-note and pitch-locked (score-exact labels). Complements the scat
+# lyrics_pool. Packs to datasets/lyrics_pool_words/.
+run_id: lyrics_pool_words
+master_seed: 20260628
+
+scores: evals/fixtures/scores/*.tsv
+output_root: out/lyrics_pool_words
+
+voices:
+  - {voice_id: female, kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:female"}
+  - {voice_id: male,   kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:male"}
+  - {voice_id: tenor,  kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:tenor"}
+  - {voice_id: soprano, kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:soprano"}
+
+lanes:
+  svs: {enabled: true, backend: nnsvs, mode: force_score_f0}
+
+lyrics:
+  source: generated
+  theme: "love, longing, the sea, winter, light"
+  g2p_backend: espeak
+  languages: [en-us, de, fr-fr, es, it, ja]
+  model:
+    model_id: qwen2.5-0.5b-instruct
+    license: apache-2.0
+    license_ok: true
+    model_ref: Qwen/Qwen2.5-0.5B-Instruct
+  cache_dir: lyrics
+
+validator:
+  onset_ms: 50
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0

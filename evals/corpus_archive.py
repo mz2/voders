@@ -97,13 +97,18 @@ def stage(run_ids: list[str], out_dir: Path) -> int:
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     total = 0
-    for rid in run_ids:
+    for spec in run_ids:
+        rid, _, cap = spec.partition(":")  # "donor_pool:100" caps that dataset to 100 songs
+        limit = int(cap) if cap else None
         arc_corpus = REPO / "datasets" / rid / "corpus"
         if not arc_corpus.is_dir():
             print(f"skip {rid}: no archive at {arc_corpus}", file=sys.stderr)
             continue
+        oggs = sorted(arc_corpus.rglob("audio.ogg"))
+        if limit is not None:
+            oggs = oggs[:limit]  # deterministic slice — a small label/timbre anchor, not the bulk
         n = 0
-        for ogg in sorted(arc_corpus.rglob("audio.ogg")):
+        for ogg in oggs:
             dest = out_dir / f"{rid}__{ogg.parent.name}"
             dest.mkdir(parents=True, exist_ok=True)
             audio, sr = sf.read(ogg, dtype="float32")
@@ -113,7 +118,7 @@ def stage(run_ids: list[str], out_dir: Path) -> int:
                 shutil.copy2(tsv, dest / "score.tsv")
             n += 1
             total += 1
-        print(f"staged {n} songs from {rid}")
+        print(f"staged {n} songs from {rid}" + (f" (capped at {limit})" if limit else ""))
     print(f"staged {total} songs -> {out_dir}")
     return 0
 

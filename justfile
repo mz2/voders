@@ -110,9 +110,11 @@ unpack-corpus RUN_ID="donor_pool": setup
     uv run --extra cpu python evals/corpus_archive.py unpack --run-id {{RUN_ID}}
 
 # Train the SoulX Basic Pitch baseline and stream metrics and media to Weights & Biases.
-# Stages the committed datasets — the deterministic donor_pool AND the lyric/SVS lyrics_pool — into
-# the trainer's flat input dir, so the current vocal-synthesis-with-lyrics audio is trained on.
-train RUN_IDS="donor_pool lyrics_pool":
+# Stages the committed datasets into the trainer's flat input dir, REBALANCED so the neural-SVS audio
+# with lyrics is the majority: only a small `donor_pool:N` slice of the open-vowel deterministic data
+# is kept as a cheap label/timbre anchor, alongside the full scat (lyrics_pool) and real-word
+# (lyrics_pool_words) neural sets. Use `donor_pool` (no cap) to include all of it.
+train RUN_IDS="donor_pool:40 lyrics_pool lyrics_pool_words":
     uv sync --extra cpu --extra gpu --extra training
     uv run --extra cpu python evals/corpus_archive.py stage --run-ids {{RUN_IDS}} --out syntheticdataset_soulx
     bash training/train_soulx.sh
