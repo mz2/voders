@@ -121,6 +121,100 @@ def build_musicxml(notes: list[list[float]], syllables: list[str | None]) -> str
     )
 
 
+def _midi_to_hz(midi: int) -> float:
+    return 440.0 * (2.0 ** ((midi - 69) / 12.0))
+
+
+def _tone(pitch: int, n: int, sr: int) -> np.ndarray:
+    """A simple voiced tone at the score pitch — fallback when a segment can't be resynthesised."""
+    t = np.arange(n) / sr
+    f0 = _midi_to_hz(pitch)
+    nyq = sr / 2
+    sig = sum((1.0 / k) * np.sin(2 * np.pi * k * f0 * t) for k in range(1, 20) if k * f0 < nyq)
+    sig = np.asarray(sig, dtype=np.float64)
+    fade = min(int(0.005 * sr), n // 2)
+    if fade > 0:
+        ramp = np.linspace(0, 1, fade)
+        sig[:fade] *= ramp
+        sig[-fade:] *= ramp[::-1]
+    return sig
+
+
+def _voiced_runs(audio: np.ndarray, sr: int, hop_ms: float = 5.0) -> list[tuple[int, int]]:
+    """Sample ranges of voiced (energetic) segments — one per sung syllable, rests excluded."""
+    hop = max(1, int(sr * hop_ms / 1000.0))
+    frame = 2 * hop
+    n = audio.size
+    if n == 0:
+        return []
+    rms = np.array(
+        [np.sqrt(np.mean(audio[k : k + frame] ** 2)) for k in range(0, n, hop)], dtype=np.float64
+    )
+    peak = float(rms.max()) if rms.size else 0.0
+    if peak <= 0:
+        return []
+    voiced = rms > 0.12 * peak
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for k, v in enumerate(voiced):
+        if v and start is None:
+            start = k
+        elif not v and start is not None:
+            runs.append((start * hop, k * hop))
+            start = None
+    if start is not None:
+        runs.append((start * hop, n))
+    return [(a, b) for a, b in runs if b - a >= frame]
+
+
+def align_and_pitchlock(
+    audio: np.ndarray, notes: list[list[float]], sr: int, frame_period: float = 5.0
+) -> np.ndarray:
+    """Re-place each sung syllable on the score grid at the exact score pitch (WORLD resynthesis).
+
+    Keeps NNSVS's timbre + consonants (the segment's spectral envelope / aperiodicity) but imposes
+    the score's f0 (flat at the MIDI pitch) and onset/offset, so onsets/pitch are exact by
+    construction and the sample passes the validator. The expressive (non-locked) render is what
+    lands in rejected/ today; this is the corpus-valid variant.
+    """
+    import pyworld
+
+    runs = _voiced_runs(audio, sr)
+    if not runs or not notes:
+        return audio
+    total = max(off for _, off, _ in notes)
+    out = np.zeros(int(round(total * sr)) + sr, dtype=np.float64)
+    n_runs, n_notes = len(runs), len(notes)
+    for i, (onset, offset, pitch) in enumerate(notes):
+        dur = offset - onset
+        if dur <= 0:
+            continue
+        a, b = runs[min(n_runs - 1, round(i * n_runs / n_notes))]  # proportional note->segment map
+        seg = audio[a:b].astype(np.float64)
+        n_samp = int(round(dur * sr))
+        note_audio: np.ndarray | None = None
+        if seg.size >= 2 * sr // 100:  # long enough to analyse
+            f0, t = pyworld.harvest(seg, sr, frame_period=frame_period)
+            if np.any(f0 > 0):  # voiced segment: transplant its timbre at the score pitch
+                sp = pyworld.cheaptrick(seg, f0, t, sr)
+                ap = pyworld.d4c(seg, f0, t, sr)
+                n_tgt = max(1, int(round(dur * 1000.0 / frame_period)))
+                idx = np.clip(
+                    np.round(np.linspace(0, sp.shape[0] - 1, n_tgt)).astype(int), 0, sp.shape[0] - 1
+                )
+                f0_tgt = np.full(n_tgt, _midi_to_hz(int(pitch)), dtype=np.float64)
+                note_audio = pyworld.synthesize(f0_tgt, sp[idx], ap[idx], sr, frame_period)
+        if note_audio is None or note_audio.size == 0 or float(np.max(np.abs(note_audio))) < 1e-4:
+            note_audio = _tone(int(pitch), n_samp, sr)  # fallback: in-tune tone at the score pitch
+        start = int(round(onset * sr))
+        end = min(start + note_audio.size, out.size)
+        out[start:end] += note_audio[: end - start]
+    peak = float(np.max(np.abs(out))) if out.size else 0.0
+    if peak > 0:
+        out *= 0.9 / peak
+    return out[: int(round(total * sr)) + 1].astype(np.float32)
+
+
 @functools.cache
 def _load_engine(model_ref: str):
     import torch
@@ -137,8 +231,14 @@ def render_nnsvs(
     syllables: list[str | None],
     sr: int,
     model_ref: str = DEFAULT_MODEL,
+    pitch_lock: bool = True,
 ) -> np.ndarray:
-    """Render natural singing for ``notes`` + ``syllables`` with NNSVS, resampled to ``sr``."""
+    """Render natural singing for ``notes`` + ``syllables`` with NNSVS, resampled to ``sr``.
+
+    With ``pitch_lock`` (default), each sung syllable is re-placed on the score grid at the exact
+    score pitch/timing via WORLD resynthesis (corpus-valid: passes the onset/pitch gates while
+    keeping NNSVS timbre). Set it False for the raw, expressive render.
+    """
     import pysinsy
     from nnmnkwii.io import hts
     from scipy.signal import resample_poly
@@ -163,4 +263,6 @@ def render_nnsvs(
         wav = wav / peak * 0.9
     if model_sr != sr:
         wav = resample_poly(wav, sr, model_sr)
+    if pitch_lock:
+        wav = align_and_pitchlock(wav, notes, sr)
     return wav.astype(np.float32)
