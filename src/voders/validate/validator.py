@@ -76,19 +76,30 @@ def _select_torch_device(pref: str = "auto"):  # noqa: ANN202 - returns str | to
 
 
 def _measure_crepe(
-    audio: np.ndarray, sr: int, group_delay_ms: float, device: str = "auto", model: str = "full"
+    audio: np.ndarray,
+    sr: int,
+    group_delay_ms: float,
+    device: str = "auto",
+    model: str = "full",
+    decoder: str = "viterbi",
 ) -> _Measurement:
     """Measure f0 with CREPE (a neural pitch estimator) on an accelerator when available.
 
     torchcrepe is imported lazily so the CPU baseline never pulls in torch at module load (FR-009).
     Audio is resampled to 16 kHz (CREPE's native rate); frames are 10 ms apart, matching the
     ``crepe_f0`` timing budget. ``model`` selects the CREPE capacity: ``full`` (most accurate) or
-    ``tiny`` (~5-10x faster, slightly less accurate — adequate for a gating check).
+    ``tiny`` (faster). ``decoder`` selects per-frame pitch decoding: ``viterbi`` (smooth, default)
+    or ``argmax`` (~15x faster — no HMM smoothing, adequate for a gating check). Both keep the
+    same 10 ms frame grid, so the latency budget (FR-019) is unaffected.
     """
     import torch
     import torchcrepe
 
     device = _select_torch_device(device)
+    decoder_fn = {
+        "viterbi": torchcrepe.decode.viterbi,
+        "argmax": torchcrepe.decode.argmax,
+    }.get(decoder, torchcrepe.decode.viterbi)
 
     x = audio.astype(np.float32)
     if sr != _CREPE_SR:
@@ -101,6 +112,7 @@ def _measure_crepe(
         fmin=float(midi_to_hz(_FMIN_MIDI)),
         fmax=float(midi_to_hz(_FMAX_MIDI)),
         model=model,
+        decoder=decoder_fn,
         return_periodicity=True,
         device=device,
         pad=True,
@@ -120,20 +132,21 @@ def _measure_f0(
     method: str = "pyin_f0",
     device: str = "auto",
     model: str = "full",
+    decoder: str = "viterbi",
 ) -> _Measurement:
     """Dispatch f0 measurement. ``pyin_f0`` (CPU) is the default; ``crepe_f0`` is the GPU upgrade.
 
     ``auto`` uses CREPE when torch + torchcrepe import, else falls back to pyin. ``crepe_f0`` is
-    explicit and raises if torchcrepe is unavailable (no silent downgrade). ``model`` selects the
-    CREPE capacity (``full`` | ``tiny``) and is ignored by pyin.
+    explicit and raises if torchcrepe is unavailable (no silent downgrade). ``model`` (full | tiny)
+    and ``decoder`` (viterbi | argmax) tune the CREPE path and are ignored by pyin.
     """
     if method == "pyin_f0":
         return _measure_pyin(audio, sr, group_delay_ms)
     if method == "crepe_f0":
-        return _measure_crepe(audio, sr, group_delay_ms, device, model)
+        return _measure_crepe(audio, sr, group_delay_ms, device, model, decoder)
     if method == "auto":
         try:
-            return _measure_crepe(audio, sr, group_delay_ms, device, model)
+            return _measure_crepe(audio, sr, group_delay_ms, device, model, decoder)
         except ImportError:
             return _measure_pyin(audio, sr, group_delay_ms)
     raise ValueError(f"unknown f0 method {method!r}; expected pyin_f0 | crepe_f0 | auto")
@@ -177,6 +190,7 @@ class Validator:
         method = f0_method or self.cfg.f0_method
         device = f0_device or self.cfg.f0_device
         model = self.cfg.f0_model
+        decoder = self.cfg.f0_decoder
 
         # Clipping gate (US3 scenario 3): never silently distort into the corpus.
         peak = float(np.max(np.abs(audio))) if audio.size else 0.0
@@ -184,7 +198,13 @@ class Validator:
 
         group_delay = self.timing.total_active_group_delay_ms()
         meas = _measure_f0(
-            audio.astype(float), self.sr, group_delay, method=method, device=device, model=model
+            audio.astype(float),
+            self.sr,
+            group_delay,
+            method=method,
+            device=device,
+            model=model,
+            decoder=decoder,
         )
 
         onset_ok = True

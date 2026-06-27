@@ -267,6 +267,13 @@ def main():
         help="CREPE capacity for validation: tiny (~5-10x faster, for gating) | full (accurate)",
     )
     augment_group.add_argument(
+        "--augment-f0-decoder",
+        type=str,
+        default="argmax",
+        choices=["argmax", "viterbi"],
+        help="CREPE decoder for validation: argmax (~15x faster, for gating) | viterbi (smooth)",
+    )
+    augment_group.add_argument(
         "--augment-max-retries",
         type=int,
         default=4,
@@ -537,6 +544,7 @@ def main():
             f0_method=args.augment_f0_method,
             f0_device=args.augment_f0_device,
             f0_model=args.augment_f0_model,
+            f0_decoder=args.augment_f0_decoder,
             pitch_shift_semitones=args.augment_pitch_shift_semitones,
             time_stretch_amount=args.augment_time_stretch,
             max_retries=args.augment_max_retries,

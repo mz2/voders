@@ -89,6 +89,7 @@ class DynamicAugmentor:
         f0_method: str = "crepe_f0",
         f0_device: str = "auto",
         f0_model: str = "tiny",
+        f0_decoder: str = "argmax",
         pitch_shift_semitones: float = 0.0,
         time_stretch_amount: float = 0.0,
         max_retries: int = 4,
@@ -123,6 +124,7 @@ class DynamicAugmentor:
         self.f0_method = f0_method
         self.f0_device = f0_device
         self.f0_model = f0_model
+        self.f0_decoder = f0_decoder
         self._rng: np.random.Generator | None = None
         self._validator = None
 
@@ -165,6 +167,7 @@ class DynamicAugmentor:
                     f0_method=self.f0_method,
                     f0_device=self.f0_device,
                     f0_model=self.f0_model,
+                    f0_decoder=self.f0_decoder,
                 ),
                 sr=self.sr,
             )
