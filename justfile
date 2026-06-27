@@ -83,7 +83,9 @@ unpack-corpus RUN_ID="donor_pool": setup
     uv run --extra cpu python evals/corpus_archive.py unpack --run-id {{RUN_ID}}
 
 # Train the SoulX Basic Pitch baseline and stream metrics and media to Weights & Biases.
-train:
+train manifest="out/donor_pool/manifest.jsonl":
+    uv sync --extra cpu --extra gpu --extra training
+    @test -f {{manifest}} || uv run --no-sync python evals/corpus_archive.py unpack
     bash training/train_soulx.sh
 
 # Run the full test suite.
