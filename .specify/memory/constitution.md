@@ -1,30 +1,29 @@
 <!--
 Sync Impact Report
 ==================
-Version change: (none) → 1.0.0
-Bump rationale: Initial ratification of the project constitution. No prior version exists in the repository (the file held only template placeholders).
+Version change: 1.1.0 → 1.2.0
+Bump rationale: MINOR — a new core principle (V. Clear, Audience-Aware Writing) is added. No existing principle is removed or reversed.
+
+Note on git history: v1.1.0 was never committed (working-tree-only). The next commit will encompass v1.2.0 relative to the committed v1.0.0 baseline, i.e. it adds Principles IV and V together. The intermediate v1.1.0 number is preserved in this report so the principle-addition sequence stays traceable.
 
 Modified principles:
-- (initial)
+- (none renamed or removed)
 
 Added sections:
-- Core Principles: I. Red-Green-Refactor TDD (NON-NEGOTIABLE), II. Zero-Warning Linting (NON-NEGOTIABLE), III. Documentation Stays Current with the Repo
-- Commit & Attribution Discipline
-- Development Workflow & Quality Gates
-- Governance
+- Core Principles: V. Clear, Audience-Aware Writing
 
 Removed sections:
-- All `[PLACEHOLDER]` tokens from the template
+- (none)
 
 Templates requiring updates:
 - ✅ `.specify/memory/constitution.md` — written
-- ✅ `.specify/templates/plan-template.md` — Constitution Check section will be exercised by `/speckit-plan` against the principles below; no template edit required because the section already references the constitution file by design
-- ✅ `.specify/templates/spec-template.md` — no edit required; spec template does not encode language about TDD/linting/docs/attribution and the spec workflow itself is unaffected by these principles
-- ✅ `.specify/templates/tasks-template.md` — no edit required; the template's note that "tests are OPTIONAL — only include them if explicitly requested in the feature specification" is overridden at execution time by Principle I (TDD is non-negotiable) when `/speckit-tasks` runs against this constitution. Recording this here so `/speckit-tasks` callers know the constitution wins over the template comment.
-- ✅ `CLAUDE.md` — no edit required; CLAUDE.md currently delegates context to the active plan and contains no rules in conflict with this constitution
+- ✅ `.specify/templates/plan-template.md` — no edit; the writing principle applies to plan prose at authoring time and is enforced by reviewers, not by template structure
+- ✅ `.specify/templates/spec-template.md` — no edit; same reasoning
+- ✅ `.specify/templates/tasks-template.md` — no edit; same reasoning
+- ✅ `CLAUDE.md` — no edit required
 
 Follow-up TODOs:
-- (none)
+- The earlier prose of this constitution (Principles I–IV) and the existing `specs/001-synthetic-singing-corpus/spec.md` predate Principle V. They are not retroactively rewritten in this amendment. A future PATCH amendment MAY tighten them; until then, the principle is forward-looking.
 -->
 
 # Voders Constitution
@@ -49,6 +48,33 @@ Documentation that lives in this repository — `README.md`, `CLAUDE.md`, `docs/
 
 **Rationale:** Documentation drift is silent and compounds. The only sustainable way to keep docs honest is to make them part of the change, not a follow-up.
 
+### IV. Evaluation-First Iteration (NON-NEGOTIABLE)
+
+Before implementing any non-trivial feature, the engineer (human or agent) MUST first decide and check in *both* of the following:
+
+- **How to run it.** A reproducible command, script, harness, fixture, or notebook that exercises the feature end-to-end on representative inputs. "It runs" means a contributor (or an agentic loop) can invoke a single command and watch the feature do its work.
+- **How to evaluate it.** An automated check — metric, golden output, regression dataset, or an explicit assertion against the spec's Success Criteria — that converts "did this work?" into a yes/no verdict readable by a reviewer or by an LLM driving the loop. For data and ML features, this MUST be a runnable script that reports the spec's success-criteria metrics on a small fixture. For tools and pipelines, this MUST be a quickstart that runs the feature on a checked-in input and asserts on the output.
+
+The harness and evaluation MUST exist *before* the feature code is written, and MUST live in the same PR (or an earlier PR explicitly referenced by the feature PR). This is the system-level companion to Principle I: TDD pins down units; evaluation-first pins down behaviour at the integration / output boundary. The "Independent Test" field on every user story in `spec-template.md` is interpreted from now on as a runnable verification, not just prose.
+
+Trivial changes — typo fixes, documentation-only edits, mechanical refactors with no behavioural delta, and one-line bug fixes covered by an existing regression test — are exempt.
+
+**Rationale:** Without a runnable harness and an explicit evaluation, iteration degrades into "stare at code and hope". Agentic development loops magnify the cost of that hope: an agent that can write ten attempts in five minutes still needs a way to read off which one is correct, and on which axis it improved. Building the harness first inverts the cost: once it exists, every later iteration is cheap to verify, and the loop — human or agentic — converges on the intended behaviour instead of drifting.
+
+### V. Clear, Audience-Aware Writing
+
+All writing in this repository — specs, plans, READMEs, comments, commit messages, PR descriptions, and the constitution itself — MUST target a reader with a computer-science bachelor's-level background who is *not* a working ML researcher. The rules:
+
+- **Gloss ML jargon on first use.** Acronyms, metrics, and algorithms (HCQT, COnPOff F1, NSF vocoder, MFA forced alignment, RVC, and similar) get a one-sentence definition the first time they appear in a document. Use the term freely after that.
+- **Cite once.** When a claim depends on a paper, dataset, or repo, link it once near the claim. Don't re-cite for every mention.
+- **Shortest version that doesn't lose meaning.** Cut hedges, restatements, scene-setting, and meta-narration. Lists beat paragraphs when items are independent.
+- **Specific beats abstract.** Concrete numbers, exact file paths, exact commands, minimal reproducible examples beat generalities.
+- **No marketing language.** Forbidden: "robust", "scalable", "world-class", "best-in-class", "leveraging", "synergies", and similar filler.
+
+This principle is forward-looking: documents authored before this amendment are not retroactively rewritten by it. New documents and amended sections MUST follow it.
+
+**Rationale:** The project sits at the intersection of audio ML and software engineering. The people who will actually maintain it — teammates, future-me, code reviewers — have CS backgrounds but won't necessarily have read the singing-transcription literature. Writing for an imaginary ML-researcher peer locks them out; padding to look thorough wastes their time. The rule cuts both ways: explain enough to be readable, and don't say more than you need.
+
 ## Commit & Attribution Discipline
 
 Commit messages and pull-request descriptions in this repository MUST NOT attribute authorship to Claude Code, Claude, or any other AI assistant. Specifically, the following are forbidden:
@@ -69,8 +95,10 @@ The following gates apply to every PR before it is mergeable:
 2. **Lint and format clean.** `lint` and `format` (or their language-specific equivalents named in this repo) MUST exit zero with no warnings.
 3. **Docs and code move together.** If the diff touches a public-facing surface (CLI flag, config key, file format, exported function/API, or a documented invariant), the same diff MUST update the corresponding docs.
 4. **Constitution alignment.** Any PR that introduces a violation of the principles above MUST either fix the violation or include a Complexity Tracking entry in the plan (per `plan-template.md`) with explicit justification and a remediation owner.
+5. **Evaluation harness present.** Non-trivial feature PRs MUST check in a runnable harness (single-command invocation) and a runnable evaluation (single-command verdict against the spec's Success Criteria). Reviewers MUST run the evaluation locally or in CI before approving. Trivial PRs as defined in Principle IV are exempt.
+6. **Writing readable.** Reviewers MUST flag prose that violates Principle V — undefined ML jargon, padding, marketing language — and the author MUST fix it before merge.
 
-`/speckit-plan` MUST run its Constitution Check against this file. `/speckit-tasks` MUST emit test tasks for every user story (Principle I supersedes the template's "tests are OPTIONAL" note). `/speckit-implement` MUST refuse to mark an implementation task complete while lint or test gates fail.
+`/speckit-plan` MUST run its Constitution Check against this file and MUST capture, inside Technical Context or Project Structure, the feature's *Evaluation strategy* — the command(s) that run the feature, the command(s) that evaluate it, and the pass/fail criterion referenced back to the spec's Success Criteria. `/speckit-tasks` MUST emit (a) test tasks for every user story (Principle I supersedes the template's "tests are OPTIONAL" note) and (b) at least one evaluation-harness task per user story, ordered before the implementation tasks for that story. `/speckit-implement` MUST refuse to mark an implementation task complete while lint, test, or evaluation gates fail.
 
 ## Governance
 
@@ -86,4 +114,4 @@ This constitution is the authoritative source of project-wide rules. Where a tem
 
 **Compliance review.** Compliance is checked on every PR via the gates in *Development Workflow & Quality Gates*. The constitution itself is reviewed at least once per release cycle; the reviewer confirms that the principles still reflect how the team actually wants to work and proposes amendments if not.
 
-**Version**: 1.0.0 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-06-27
+**Version**: 1.2.0 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-06-27
