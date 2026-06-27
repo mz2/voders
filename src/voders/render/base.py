@@ -26,6 +26,8 @@ class RenderRequest:
     # Optional per-note syllables resolved by the lyric layer (FR-006). ``None`` (or a ``None``
     # entry) means open-vowel for that note. Only the SVS lane articulates; other lanes ignore them.
     lyrics: list[str | None] | None = None
+    # G2P backend the SVS lane uses to phonemize syllables: "espeak" (CPU rules) | "neural" (GPU).
+    g2p_backend: str = "espeak"
 
 
 @dataclass

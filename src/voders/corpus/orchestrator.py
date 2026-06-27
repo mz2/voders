@@ -330,7 +330,14 @@ class Orchestrator:
             return record, None
         lyrics = plan.syllables if plan is not None else None
         result = lane.render(
-            RenderRequest(score=ps.score, voice=voice, seed=seed, options=options, lyrics=lyrics)
+            RenderRequest(
+                score=ps.score,
+                voice=voice,
+                seed=seed,
+                options=options,
+                lyrics=lyrics,
+                g2p_backend=self.config.lyrics.g2p_backend,
+            )
         )
         verdict = validator.validate(result.audio, result.label_score)
         lane_dev = result.notes.get("max_onset_dev_ms", 0.0)

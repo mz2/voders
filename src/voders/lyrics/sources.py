@@ -214,9 +214,7 @@ class GeneratedSource:
         # ``_generate_via_backend`` remains available for isolated/alternative model toolkits.
         from voders.lyrics.llm import generate_lyrics
 
-        return generate_lyrics(
-            self._theme, len(score.notes), seed, model_ref=self._model.model_ref
-        )
+        return generate_lyrics(self._theme, len(score.notes), seed, model_ref=self._model.model_ref)
 
 
 def build_source(

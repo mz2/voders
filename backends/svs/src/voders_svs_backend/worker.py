@@ -48,11 +48,12 @@ _VOWEL_FORMANTS: dict[str, tuple[float, float, float]] = {
     "uː": (300, 870, 2240),
     "ə": (500, 1500, 2500),
     "ɚ": (490, 1350, 1690),
+    "ɝ": (490, 1350, 1690),
     "ɜ": (490, 1350, 1690),
 }
 _DEFAULT_FORMANTS = (730, 1090, 2440)  # open "ah"
 
-_VOWELS = set("aeiouɑɐɒæɛɜɪɔʊʌəɘɞyøœɶ")
+_VOWELS = set("aeiouɑɐɒæɛɜɝɪɔʊʌəɚɘɞyøœɶ")
 _NASALS = {"m", "n", "ŋ"}
 _APPROX = {"l", "r", "ɹ", "w", "j", "ɫ"}
 _FRIC_UNVOICED = {"s", "ʃ", "f", "θ", "h", "tʃ"}

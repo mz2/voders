@@ -14,6 +14,7 @@ pure function and needs neither.
 
 from __future__ import annotations
 
+import functools
 from typing import TYPE_CHECKING
 
 from voders.lyrics.models import PhonemeRun
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 
 # espeak-ng IPA vowel symbols used to find the nucleus. Approximate but sufficient to split a
 # syllable into (leading consonants, vowel nucleus, trailing consonants).
-_IPA_VOWELS = frozenset("aeiouɑɐɒæɛɜɪɔʊʌəɘɞyøœɶ")
+_IPA_VOWELS = frozenset("aeiouɑɐɒæɛɜɝɪɔʊʌəɚɘɞyøœɶ")
 
 
 def is_vowel_phoneme(phoneme: str) -> bool:
@@ -59,11 +60,26 @@ def map_syllable(
     )
 
 
-def text_to_phonemes(text: str, *, backend: str = "espeak") -> list[str]:
-    """Convert a syllable/word to phonemes via ``phonemizer``/espeak-ng (lazy import, FR-005).
+# A higher-quality, GPU-based alternative to espeak's rule G2P: a byte-level T5 trained for G2P.
+# Selected with ``lyrics.g2p_backend: neural``; needs the gpu + lyrics-gpu extras.
+DEFAULT_NEURAL_G2P_MODEL = "charsiu/g2p_multilingual_byT5_tiny_16_layers_100"
+# IPA stress/length/diacritic marks to drop when splitting a fused neural IPA string into tokens.
+_IPA_DIACRITICS = set("ˈˌːˑ̃ʰʷ̩̯̪̥")
 
-    Raises RuntimeError if the optional ``lyrics`` extra (``phonemizer``) / espeak-ng is missing.
+
+def text_to_phonemes(text: str, *, backend: str = "espeak") -> list[str]:
+    """Convert a syllable/word to a list of phonemes (one token each).
+
+    ``backend='espeak'`` (default) uses ``phonemizer``/espeak-ng (rule-based, CPU). ``backend=
+    'neural'`` uses a byte-level T5 G2P model on GPU (higher quality). Heavy deps are imported
+    lazily, so the CPU baseline loads neither (FR-005).
     """
+    if backend == "neural":
+        return _neural_phonemes(text)
+    return _espeak_phonemes(text)
+
+
+def _espeak_phonemes(text: str) -> list[str]:
     try:
         from phonemizer import phonemize  # lazy: not imported on the CPU baseline (FR-005)
         from phonemizer.separator import Separator
@@ -77,7 +93,7 @@ def text_to_phonemes(text: str, *, backend: str = "espeak") -> list[str]:
     out = phonemize(
         [text],
         language="en-us",
-        backend=backend,
+        backend="espeak",
         separator=Separator(phone="|", word=" "),
         strip=True,
     )
@@ -86,7 +102,33 @@ def text_to_phonemes(text: str, *, backend: str = "espeak") -> list[str]:
     return [p for p in str(out[0]).replace(" ", "|").split("|") if p]
 
 
-def phoneme_runs(plan_syllables: list[str | None], score: Score) -> list[PhonemeRun]:
+def _neural_phonemes(text: str, model_ref: str = DEFAULT_NEURAL_G2P_MODEL) -> list[str]:
+    import torch
+
+    tokenizer, model, device = _load_neural_g2p_cached(model_ref)
+    ids = tokenizer([f"<eng-us>: {text}"], return_tensors="pt").to(device)
+    with torch.no_grad():
+        out = model.generate(**ids, max_length=48, num_beams=1)  # greedy => deterministic
+    ipa = tokenizer.batch_decode(out, skip_special_tokens=True)[0]
+    # The model emits a fused IPA string ("ˈwɪntɝ"); split into single-symbol tokens, dropping
+    # stress/length diacritics so map_syllable sees individual consonant/vowel phonemes.
+    return [c for c in ipa if c.strip() and c not in _IPA_DIACRITICS]
+
+
+@functools.cache
+def _load_neural_g2p_cached(model_ref: str):
+    import torch
+    from transformers import AutoTokenizer, T5ForConditionalGeneration
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    tokenizer = AutoTokenizer.from_pretrained(model_ref)
+    model = T5ForConditionalGeneration.from_pretrained(model_ref).to(device).eval()
+    return tokenizer, model, device
+
+
+def phoneme_runs(
+    plan_syllables: list[str | None], score: Score, *, backend: str = "espeak"
+) -> list[PhonemeRun]:
     """Map each note's syllable to a :class:`PhonemeRun` (skips ``None``/open-vowel notes).
 
     Calls the G2P backend (lazy) per non-empty syllable, so it only runs when lyrics are present.
@@ -95,6 +137,6 @@ def phoneme_runs(plan_syllables: list[str | None], score: Score) -> list[Phoneme
     for i, (syllable, note) in enumerate(zip(plan_syllables, score.notes, strict=True)):
         if not syllable:
             continue
-        phonemes = text_to_phonemes(syllable)
+        phonemes = text_to_phonemes(syllable, backend=backend)
         runs.append(map_syllable(phonemes, note.onset_s, note.offset_s, i))
     return runs
