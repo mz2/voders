@@ -47,6 +47,69 @@ _ROW = {
     "v": "b", "m": "m", "y": "y", "r": "r", "l": "r", "w": "w",
 }
 DEFAULT_MODEL = "r9y9/yoko_latest"
+
+# Voice "characters" derived from the base voicebank by WORLD formant (vocal-tract-length) warping:
+# a factor < 1 lowers the formants (longer tract -> male/deeper), > 1 raises them (brighter/child).
+# Pitch is always the score's, so a character changes timbre, not the sung notes. This yields
+# distinct male & female voices from the single available nnsvs voicebank (yoko, female).
+CHARACTERS: dict[str, float] = {
+    "yoko": 1.0,
+    "female": 1.0,
+    "soprano": 1.10,
+    "child": 1.20,
+    "alto": 0.93,
+    "tenor": 0.86,
+    "male": 0.82,
+    "baritone": 0.78,
+    "bass": 0.72,
+}
+
+
+def character_factor(name: str) -> float:
+    """Formant-warp factor for a named voice character (default 1.0 = the base female voicebank)."""
+    return CHARACTERS.get(name.lower(), 1.0)
+
+
+# Reference spectral-envelope centroid (Hz), calibrated to the median across the bundled donor pool.
+# A donor below this reads as darker/deeper (factor < 1), above as brighter (factor > 1). This is a
+# timbre/brightness character, not a strict gender classifier (centroid also tracks the vowel).
+_REF_CENTROID_HZ = 740.0
+
+
+@functools.cache
+def donor_formant_factor(wav_path: str) -> float:
+    """Estimate a formant-warp factor from a donor recording (freesound/VocalSet), so its gross
+    timbre/gender is carried onto the NNSVS singing. Pitch-independent (uses the WORLD envelope)."""
+    import pyworld
+    import soundfile as sf
+
+    audio, sr = sf.read(wav_path)
+    audio = np.asarray(audio, dtype=np.float64)
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+    if audio.size < sr // 10:
+        return 1.0
+    f0, t = pyworld.harvest(audio, sr, frame_period=10.0)
+    sp = pyworld.cheaptrick(audio, f0, t, sr)
+    voiced = sp[f0 > 0]
+    if voiced.size == 0:
+        return 1.0
+    freqs = np.linspace(0.0, sr / 2.0, voiced.shape[1])
+    centroid = float((voiced * freqs).sum() / max(voiced.sum(), 1e-9))
+    return float(np.clip(centroid / _REF_CENTROID_HZ, 0.72, 1.20))
+
+
+def _formant_warp(sp: np.ndarray, factor: float) -> np.ndarray:
+    """Scale the spectral envelope's frequency axis by ``factor`` (vocal-tract-length warp)."""
+    if abs(factor - 1.0) < 1e-3:
+        return sp
+    n_bins = sp.shape[1]
+    src = np.arange(n_bins)
+    query = np.clip(src / factor, 0, n_bins - 1)
+    out = np.empty_like(sp)
+    for f in range(sp.shape[0]):
+        out[f] = np.interp(query, src, sp[f])
+    return out
 _NOTE_NAMES = ["C", "C", "D", "D", "E", "F", "F", "G", "G", "A", "A", "B"]
 _NOTE_ALTER = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0]
 
@@ -168,7 +231,11 @@ def _voiced_runs(audio: np.ndarray, sr: int, hop_ms: float = 5.0) -> list[tuple[
 
 
 def align_and_pitchlock(
-    audio: np.ndarray, notes: list[list[float]], sr: int, frame_period: float = 5.0
+    audio: np.ndarray,
+    notes: list[list[float]],
+    sr: int,
+    frame_period: float = 5.0,
+    formant_factor: float = 1.0,
 ) -> np.ndarray:
     """Re-place each sung syllable on the score grid at the exact score pitch (WORLD resynthesis).
 
@@ -196,7 +263,7 @@ def align_and_pitchlock(
         if seg.size >= 2 * sr // 100:  # long enough to analyse
             f0, t = pyworld.harvest(seg, sr, frame_period=frame_period)
             if np.any(f0 > 0):  # voiced segment: transplant its timbre at the score pitch
-                sp = pyworld.cheaptrick(seg, f0, t, sr)
+                sp = _formant_warp(pyworld.cheaptrick(seg, f0, t, sr), formant_factor)
                 ap = pyworld.d4c(seg, f0, t, sr)
                 n_tgt = max(1, int(round(dur * 1000.0 / frame_period)))
                 idx = np.clip(
@@ -232,6 +299,7 @@ def render_nnsvs(
     sr: int,
     model_ref: str = DEFAULT_MODEL,
     pitch_lock: bool = True,
+    formant_factor: float = 1.0,
 ) -> np.ndarray:
     """Render natural singing for ``notes`` + ``syllables`` with NNSVS, resampled to ``sr``.
 
@@ -264,5 +332,5 @@ def render_nnsvs(
     if model_sr != sr:
         wav = resample_poly(wav, sr, model_sr)
     if pitch_lock:
-        wav = align_and_pitchlock(wav, notes, sr)
+        wav = align_and_pitchlock(wav, notes, sr, formant_factor=formant_factor)
     return wav.astype(np.float32)

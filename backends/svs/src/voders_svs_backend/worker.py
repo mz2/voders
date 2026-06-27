@@ -216,18 +216,30 @@ def main(argv: list[str] | None = None) -> int:
     notes = req["notes"]
     seed = int(req.get("seed", 0))
 
-    # A model_ref that is an NNSVS voicebank id (not a donor .wav path) selects real neural singing;
-    # otherwise fall back to the in-process formant articulator. Aliases: "" / "yoko" -> yoko.
+    # The voice's model_ref selects real NNSVS singing (and a voice character), else the in-process
+    # formant articulator. Forms: "nnsvs:<char>" (male|female|tenor|... -> formant warp),
+    # "nnsvs:donor:<wav>" (character from a freesound/VocalSet donor), a real NNSVS model id
+    # ("<a>/<b>"), "yoko"/""; a plain donor ".wav" stays on the formant path (back-compat).
     model_ref = str(req.get("model_ref", ""))
     engine = "formant"
     audio = None
     if _wants_nnsvs(model_ref) and lyrics:
         try:
-            from voders_svs_backend.nnsvs_engine import DEFAULT_MODEL, render_nnsvs
+            from voders_svs_backend.nnsvs_engine import (
+                DEFAULT_MODEL,
+                character_factor,
+                donor_formant_factor,
+                render_nnsvs,
+            )
 
-            ref = DEFAULT_MODEL if model_ref in ("", "yoko", "nnsvs") else model_ref
-            ref = ref[len("nnsvs:") :] if ref.startswith("nnsvs:") else ref
-            audio = render_nnsvs(notes, lyrics, sr, model_ref=ref)
+            base, factor = DEFAULT_MODEL, 1.0
+            if model_ref.startswith("nnsvs:donor:"):
+                factor = donor_formant_factor(model_ref[len("nnsvs:donor:") :])
+            elif model_ref.startswith("nnsvs:"):
+                factor = character_factor(model_ref[len("nnsvs:") :])
+            elif "/" in model_ref and not model_ref.endswith(".wav"):
+                base = model_ref  # a real NNSVS voicebank id
+            audio = render_nnsvs(notes, lyrics, sr, model_ref=base, formant_factor=factor)
             engine = "nnsvs"
         except Exception as exc:  # robust: degrade to the formant articulator, never crash the run
             print(f"nnsvs render failed ({exc}); falling back to formant", file=sys.stderr)

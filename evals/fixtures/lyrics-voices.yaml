@@ -1,0 +1,32 @@
+# Multiple SVS voices singing the same scat lyrics: named characters (female/male/tenor/soprano,
+# via WORLD formant warping of the yoko voicebank) + two donor-derived characters (timbre estimated
+# from a freesound/VocalSet recording). All real NNSVS singing, pitch-locked to the score.
+run_id: lyrics-voices
+master_seed: 20260627
+
+scores: evals/fixtures/scores/score_00[0-1].tsv
+output_root: out/lyrics-voices
+
+voices:
+  - {voice_id: female,  kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:female"}
+  - {voice_id: soprano, kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:soprano"}
+  - {voice_id: tenor,   kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:tenor"}
+  - {voice_id: male,    kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:male"}
+  - {voice_id: bass,    kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:bass"}
+  - {voice_id: donor_bright, kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:donor:models/donors/vocalset_02.wav"}
+  - {voice_id: donor_dark,   kind: svs_voicebank, license: CC0, consent_verified: true, model_ref: "nnsvs:donor:models/donors/vocalset_06.wav"}
+
+lanes:
+  svs: {enabled: true, backend: nnsvs, mode: force_score_f0}
+
+lyrics:
+  source: automatic
+  inventory: scat
+
+validator:
+  onset_ms: 50
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0
