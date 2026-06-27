@@ -68,12 +68,17 @@ def _get(url: str, token: str) -> bytes:
         return resp.read()
 
 
+# Bias every search toward singing/voice so free-text queries don't surface unrelated sounds
+# (Freesound's text match is loose — bare "vowel" otherwise returns squeaks and ringtones).
+VOICE_TAGS = "tag:singing OR tag:vocal OR tag:voice OR tag:choir OR tag:vowel"
+
+
 def search(query: str, license_filter: str, count: int, token: str) -> list[dict]:
-    """Return up to ``count`` Freesound search hits with preview URLs."""
+    """Return up to ``count`` Freesound search hits (voice-tagged) with preview URLs."""
     params = urllib.parse.urlencode(
         {
             "query": query,
-            "filter": f"{license_filter} duration:[0.5 TO 15]",
+            "filter": f"{license_filter} duration:[0.5 TO 15] ({VOICE_TAGS})",
             "fields": "id,name,username,license,previews,duration",
             "sort": "rating_desc",
             "page_size": count,
@@ -83,8 +88,8 @@ def search(query: str, license_filter: str, count: int, token: str) -> list[dict
     return data.get("results", [])[:count]
 
 
-def fetch_preview(hit: dict, dest: Path, token: str) -> np.ndarray | None:
-    """Download a hit's HQ preview, decode to mono float32, resample to SAMPLE_RATE."""
+def download_audio(hit: dict, token: str) -> np.ndarray | None:
+    """Download a hit's HQ preview and decode to mono float32 at SAMPLE_RATE (not yet written)."""
     previews = hit.get("previews") or {}
     url = previews.get("preview-hq-ogg") or previews.get("preview-lq-ogg")
     if not url:
@@ -104,8 +109,18 @@ def fetch_preview(hit: dict, dest: Path, token: str) -> np.ndarray | None:
     peak = float(np.max(np.abs(arr))) if arr.size else 0.0
     if peak > 0:
         arr = (arr / peak * 0.9).astype(np.float32)
-    sf.write(str(dest), arr, SAMPLE_RATE, subtype="FLOAT")
     return arr
+
+
+def _load_donor_helpers():  # noqa: ANN202
+    """Load record_donor's steady-portion + voicing helpers (sibling script, by path)."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parent / "record_donor.py"
+    spec = importlib.util.spec_from_file_location("record_donor", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -119,6 +134,11 @@ def main(argv: list[str] | None = None) -> int:
         choices=sorted(LICENSES),
         default="cc0",
         help="License to restrict to (default: cc0 — no attribution required)",
+    )
+    parser.add_argument(
+        "--no-validate",
+        action="store_true",
+        help="Keep every hit even if it doesn't look voiced (default: reject non-vocal clips)",
     )
     args = parser.parse_args(argv)
 
@@ -141,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
         print("no matching sounds found — try a different --query or --license")
         return 0
 
+    donor = None if args.no_validate else _load_donor_helpers()
     FREESOUND_ROOT.mkdir(parents=True, exist_ok=True)
     attribution = FREESOUND_ROOT / "ATTRIBUTION.txt"
     voices: list[Voice] = []
@@ -154,9 +175,16 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"  + {hit['id']} {hit['name']!r} by {hit['username']} ({hit['duration']:.1f}s)"
                 )
-                arr = fetch_preview(hit, dest, token)
+                arr = download_audio(hit, token)
                 if arr is None:
                     continue
+                # Reject clips that don't look like a voiced vowel (squeaks, ringtones, FX).
+                if donor is not None:
+                    voiced = donor.periodicity(donor.extract_steady(arr, SAMPLE_RATE), SAMPLE_RATE)
+                    if voiced < 0.4:
+                        print(f"    rejected: not voiced (periodicity {voiced:.2f})")
+                        continue
+                sf.write(str(dest), arr, SAMPLE_RATE, subtype="FLOAT")
                 att.write(
                     f'{dest.name}\tFreesound #{hit["id"]} "{hit["name"]}" by {hit["username"]}'
                     f"\t{license_str}\thttps://freesound.org/s/{hit['id']}/\n"
