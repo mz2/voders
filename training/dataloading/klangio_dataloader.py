@@ -2,6 +2,12 @@ from pathlib import Path
 
 from .base_dataloader import PianoRollAudioDataset
 
+# Klangio validation/test audio ships in the MML26-singing-synthesis repo, vendored
+# here as a git submodule. Anchor to the repo root so the default resolves regardless
+# of the process working directory (validation has no --val-path override).
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_KLANGIO_PATH = _REPO_ROOT / "external" / "MML26-singing-synthesis" / "klangiodataset"
+
 
 class KlangioDataset(PianoRollAudioDataset):
     def __str__(self):
@@ -9,7 +15,7 @@ class KlangioDataset(PianoRollAudioDataset):
 
     def __init__(
         self,
-        path="klangiodataset",
+        path=str(_DEFAULT_KLANGIO_PATH),
         groups=None,
         sequence_length=None,
         seed=42,

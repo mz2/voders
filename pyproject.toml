@@ -33,6 +33,7 @@ cpu = [
 gpu = [
     "torch>=2.12",
     "torchaudio",
+    "torchcodec",  # torchaudio.load dispatches decoding through torchcodec
     "torchcrepe>=0.0.24",
     "vocos>=0.1",  # modern neural mel-vocoder for the deterministic lane's `vocoder: vocos` option
 ]
@@ -42,6 +43,7 @@ training = [
     "torch>=2.12",
     "torchvision",
     "torchaudio",
+    "torchcodec",  # torchaudio.load dispatches decoding through torchcodec
     "librosa",
     "pandas",
     "tqdm",

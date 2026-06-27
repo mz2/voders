@@ -38,10 +38,9 @@ class SyntheticDataset(PianoRollAudioDataset):
             return []
 
         result = []
-        for song_dir in sorted(p for p in root.iterdir() if p.is_dir()):
-            audio_path = song_dir / "audio.wav"
-            tsv_path = song_dir / "score.tsv"
-            if audio_path.exists() and tsv_path.exists():
+        for tsv_path in sorted(root.rglob("score.tsv")):
+            audio_path = tsv_path.parent / "audio.wav"
+            if audio_path.exists():
                 result.append((audio_path, tsv_path))
         return result
 

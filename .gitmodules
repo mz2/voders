@@ -1,0 +1,3 @@
+[submodule "external/MML26-singing-synthesis"]
+	path = external/MML26-singing-synthesis
+	url = https://github.com/Klangio/MML26-singing-synthesis

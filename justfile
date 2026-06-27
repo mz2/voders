@@ -6,6 +6,11 @@
 
 set shell := ["bash", "-uc"]
 
+# Load secrets/config from .env (HF_TOKEN, WANDB_API_KEY, ...) into every recipe's
+# environment. `.env` is gitignored; without this `just train` can't see WANDB_API_KEY
+# and silently falls back to TensorBoard logging.
+set dotenv-load := true
+
 config := "evals/fixtures/smoke.yaml"
 manifest := "out/smoke/manifest.jsonl"
 
