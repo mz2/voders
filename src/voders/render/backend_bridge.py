@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from voders.audio import read_wav
+from voders.audio import read_wav, write_wav
 from voders.constants import SAMPLE_RATE
 from voders.scores.models import Score
 
@@ -88,3 +88,60 @@ def render_via_backend(
             raise RuntimeError(f"backend {name!r} produced no audio at {out_wav}")
         audio, _ = read_wav(out_wav)
         return audio
+
+
+def _run_worker(name: str, module: str, request: dict, files: list[Path], timeout_s: float) -> dict:
+    proj = backends_root() / name
+    if not (proj / "pyproject.toml").exists():
+        raise RuntimeError(f"backend project {name!r} not found at {proj}; run `uv sync` there")
+    proc = subprocess.run(
+        ["uv", "run", "--project", str(proj), "python", "-m", module, *[str(f) for f in files]],
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"backend {name!r} failed (exit {proc.returncode}): {proc.stderr.strip()[-500:]}"
+        )
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def convert_via_backend(
+    name: str,
+    module: str,
+    audio: np.ndarray,
+    model_ref: str,
+    *,
+    device: str = "auto",
+    sr: int = SAMPLE_RATE,
+    timeout_s: float = 600.0,
+) -> np.ndarray:
+    """Send already-rendered audio to a conversion backend and return the converted audio.
+
+    Used by the voice-conversion lane's neural backends (e.g. RVC): the core renders score-aligned
+    audio in-process, the backend changes only the timbre, and the score f0 (labels) is preserved.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        in_wav = Path(tmp) / "in.wav"
+        out_wav = Path(tmp) / "out.wav"
+        req_path = Path(tmp) / "request.json"
+        write_wav(in_wav, audio, sr)
+        req_path.write_text(
+            json.dumps(
+                {
+                    "in_wav": str(in_wav),
+                    "out_wav": str(out_wav),
+                    "model_ref": model_ref,
+                    "device": device,
+                    "f0up_key": 0,
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = _run_worker(name, module, {}, [req_path], timeout_s)
+        if not result.get("ok"):
+            raise RuntimeError(f"backend {name!r}: {result.get('error', 'conversion failed')}")
+        converted, _ = read_wav(out_wav)
+        return converted

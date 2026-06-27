@@ -48,10 +48,37 @@ def _measure_pyin(audio: np.ndarray, sr: int, group_delay_ms: float) -> _Measure
     return _Measurement(times=times, f0=np.asarray(f0), voiced=np.asarray(voiced, dtype=bool))
 
 
+def _select_torch_device(pref: str = "auto"):  # noqa: ANN202 - returns str | torch.device
+    """Resolve a torch device for the f0 estimator.
+
+    An explicit preference (``cuda`` / ``xpu`` / ``dml`` / ``cpu``) is returned as-is. ``auto``
+    probes, in order: NVIDIA CUDA, Intel XPU (Arc / recent iGPUs via intel-extension-for-pytorch),
+    DirectML (Intel/AMD iGPUs on Windows via torch-directml), then CPU. Only ``cuda`` and ``cpu``
+    are verified here; ``xpu`` / ``dml`` are wired to their documented APIs.
+    """
+    if pref and pref != "auto":
+        return pref
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    xpu = getattr(torch, "xpu", None)
+    if xpu is not None and xpu.is_available():
+        return "xpu"
+    try:
+        import torch_directml
+
+        if torch_directml.is_available():
+            return torch_directml.device()
+    except ImportError:
+        pass
+    return "cpu"
+
+
 def _measure_crepe(
     audio: np.ndarray, sr: int, group_delay_ms: float, device: str = "auto"
 ) -> _Measurement:
-    """Measure f0 with CREPE (a neural pitch estimator) on the GPU when available.
+    """Measure f0 with CREPE (a neural pitch estimator) on an accelerator when available.
 
     torchcrepe is imported lazily so the CPU baseline never pulls in torch at module load (FR-009).
     Audio is resampled to 16 kHz (CREPE's native rate); frames are 10 ms apart, matching the
@@ -60,8 +87,7 @@ def _measure_crepe(
     import torch
     import torchcrepe
 
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = _select_torch_device(device)
 
     x = audio.astype(np.float32)
     if sr != _CREPE_SR:

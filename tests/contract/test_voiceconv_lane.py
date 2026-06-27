@@ -51,19 +51,19 @@ def test_world_backend_preserves_score_and_audio_format(donor_oo: Voice) -> None
     assert result.notes.get("backend") == "world"
 
 
-def test_rvc_backend_requires_gpu_and_render_raises() -> None:
-    """rvc backend: requires_gpu() is True and render() raises (toolkit unavailable here)."""
+def test_rvc_backend_runs_out_of_process_and_requires_a_model() -> None:
+    """rvc is an out-of-process backend (core needs no GPU) and requires a consented model_ref."""
     lane = VoiceConversionLane({"backend": "rvc"})
-    assert lane.requires_gpu() is True
+    assert lane.requires_gpu() is False  # conversion runs in the backends/rvc subprocess
 
     voice = Voice(
         voice_id="vc_rvc",
         kind=VoiceKind.VOICE_CONVERSION,
         license="CC0",
         consent_verified=True,
-        model_ref="",
+        model_ref="",  # no consented target model -> fail fast before any rendering/subprocess
     )
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="model"):
         lane.render(RenderRequest(score=_small_score(), voice=voice, seed=1))
 
 

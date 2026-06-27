@@ -1,17 +1,20 @@
 """Voice-conversion (timbre) lane (FR-004, US2; research Decision 4).
 
 Voice conversion ("VC") changes a singer's *timbre* while keeping the score-derived pitch contour
-(fundamental frequency, "f0") unchanged. The load-bearing invariant is ``auto_predict_f0=False``
-(the flag the production RVC / so-vits-svc toolkits expose): the converted audio keeps the score's
-f0, so onset/offset/pitch alignment is preserved by construction and ``label_score == req.score``.
+(fundamental frequency, "f0") unchanged, so onset/offset/pitch alignment is preserved and
+``label_score == req.score``.
 
 Backends (``options["backend"]``):
 
 * ``"world"`` (default, CPU): delegates to the deterministic WORLD lane, which builds f0 directly
   from the score and uses the voice's donor recording as the timbre source. No GPU, no ``torch``.
-* ``"rvc"`` / ``"sovits"`` (GPU): the production neural VC toolkits. ``torch`` is imported lazily
-  *inside* ``render`` so the CPU baseline never pulls it in at module load; since the GPU toolkit is
-  not installed here, ``render`` raises a clear :class:`RuntimeError`.
+* ``"rvc"``: the real RVC toolkit, run **out of process** in its own uv project (``backends/rvc``,
+  Python 3.11) via :mod:`voders.render.backend_bridge`. The core renders score-aligned audio with
+  WORLD, then RVC converts only the timbre using a *consented* target voice model
+  (``voice.model_ref``, an RVC ``.pth``); RVC keeps the input audio's f0, so the labels are
+  preserved (``auto_predict_f0=False`` equivalent).
+* ``"sovits"``: so-vits-svc — a GitHub repo (not a PyPI package); wire it as another backend
+  project when its weights are available.
 """
 
 from __future__ import annotations
@@ -19,11 +22,12 @@ from __future__ import annotations
 from voders.render.base import RenderRequest, RenderResult
 
 _CPU_BACKENDS = frozenset({"world"})
-_GPU_BACKENDS = frozenset({"rvc", "sovits"})
+_SUBPROCESS_BACKENDS = frozenset({"rvc"})  # real toolkit, out-of-process (own uv project)
+_REPO_BACKENDS = frozenset({"sovits"})  # GitHub repo + weights, not yet wired
 
 
 class VoiceConversionLane:
-    """Timbre fan-out lane keeping the score f0 (``auto_predict_f0=False``) (FR-004)."""
+    """Timbre fan-out lane keeping the score f0 (FR-004)."""
 
     name = "voice_conversion"
 
@@ -32,40 +36,46 @@ class VoiceConversionLane:
         self.backend = str(self.options.get("backend", "world"))
 
     def requires_gpu(self) -> bool:
-        """False for the CPU ``world`` backend; True for the GPU ``rvc`` / ``sovits`` backends."""
-        return self.backend in _GPU_BACKENDS
+        """False: ``world`` is CPU and ``rvc`` runs out-of-process, so the core needs no GPU."""
+        return False
 
     def render(self, req: RenderRequest) -> RenderResult:
         backend = str(req.options.get("backend", self.backend))
+        from voders.render.deterministic import DeterministicLane
 
         if backend in _CPU_BACKENDS:
-            # Delegate to the deterministic WORLD lane: it constructs f0 from the score (f0 is never
-            # predicted/altered — ``auto_predict_f0=False``) using the voice's donor as the timbre.
-            from voders.render.deterministic import DeterministicLane
-
+            # WORLD constructs f0 from the score (never predicted/altered) using the donor timbre.
             result = DeterministicLane().render(req)
-            notes = dict(result.notes)
-            notes["backend"] = backend
-            # label_score == req.score by construction (exact, row-for-row).
-            return RenderResult(audio=result.audio, label_score=req.score, notes=notes)
+            return RenderResult(
+                audio=result.audio, label_score=req.score, notes={"backend": backend}
+            )
 
-        if backend in _GPU_BACKENDS:
-            # Lazily import torch so the CPU baseline never loads it at module import time.
-            import importlib
-
-            try:
-                importlib.import_module("torch")
-            except ImportError as exc:
+        if backend in _SUBPROCESS_BACKENDS:
+            if not req.voice.model_ref:
                 raise RuntimeError(
-                    f"voice-conversion backend {backend!r} requires the 'gpu' extra "
-                    f"(torch is not installed)"
-                ) from exc
+                    f"voice-conversion backend {backend!r} requires a consented target voice "
+                    "model (voice.model_ref, an RVC .pth) (FR-011)"
+                )
+            from voders.render.backend_bridge import convert_via_backend
+
+            # Render score-aligned base audio in-process, then convert only its timbre with RVC.
+            base = DeterministicLane().render(req).audio
+            converted = convert_via_backend(
+                "rvc",
+                "voders_rvc_backend.worker",
+                base,
+                model_ref=req.voice.model_ref,
+                device=str(req.options.get("device", "auto")),
+            )
+            return RenderResult(audio=converted, label_score=req.score, notes={"backend": backend})
+
+        if backend in _REPO_BACKENDS:
             raise RuntimeError(
-                f"voice-conversion backend {backend!r} requires the GPU toolkit "
-                f"(install the 'gpu' extra and the {backend} model weights); not available here"
+                f"voice-conversion backend {backend!r} is a GitHub repo + weights; "
+                "wire it as a backend project under backends/ before use"
             )
 
         raise ValueError(
             f"unknown voice-conversion backend {backend!r}; expected one of "
-            f"{sorted(_CPU_BACKENDS | _GPU_BACKENDS)}"
+            f"{sorted(_CPU_BACKENDS | _SUBPROCESS_BACKENDS | _REPO_BACKENDS)}"
         )

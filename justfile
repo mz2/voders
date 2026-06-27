@@ -76,6 +76,10 @@ demo-svs-nnsvs: setup setup-backends
 download-rvc-models: setup
     uv run python evals/download_models.py rvc
 
+# Sync the out-of-process RVC voice-conversion backend (its own uv project, Python 3.11).
+setup-rvc-backend:
+    uv sync --project backends/rvc
+
 # Render + validate with the CREPE neural f0 estimator on the GPU (needs the `gpu` extra).
 smoke-gpu: setup-gpu
     uv run --extra cpu --extra gpu python evals/make_fixtures.py

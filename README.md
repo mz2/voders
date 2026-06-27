@@ -108,6 +108,12 @@ CREPE — a neural f0 (fundamental-frequency) estimator — on the GPU instead o
 fallback; `just smoke-gpu` demonstrates it. The CPU default stays `pyin_f0` so the baseline needs
 no GPU (FR-009).
 
+`validator.f0_device` selects the accelerator: `auto` probes `cuda → xpu → dml → cpu`. NVIDIA
+(`cuda`) is verified here; **Intel/AMD GPUs** are wired to their documented APIs — Intel XPU
+(`intel-extension-for-pytorch`) or DirectML on Windows (`uv pip install torch-directml`, then
+`f0_device: dml`). Without a matching accelerator it falls back to CPU (so CREPE still runs, just
+unaccelerated). CUDA is NVIDIA-only, so an Intel integrated GPU uses `xpu`/`dml`, not `cuda`.
+
 **Out-of-process backends.** Lane toolkits whose dependency chains conflict with the 3.14 core live
 in their own uv projects under `backends/` (own `pyproject.toml` / `.python-version` / `uv.lock`).
 The core invokes them with `uv run --project backends/<name>` and exchanges a JSON request plus a
