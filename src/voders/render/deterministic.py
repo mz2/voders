@@ -160,4 +160,11 @@ class DeterministicLane:
         if peak > 0:
             out = (out * (0.9 / peak)).astype(np.float32)
         notes: dict[str, object] = {"dynamics_applied": True} if dynamics_applied else {}
+        # Optional neural-vocoder enhancement (alignment-safe: mel preserves timing/pitch). Lazily
+        # imported so the CPU baseline never loads torch (FR-009).
+        if str(req.options.get("vocoder", "world")) == "vocos":
+            from voders.render.vocos_enhance import enhance
+
+            out = enhance(out, SAMPLE_RATE, device=str(req.options.get("device", "auto")))
+            notes["vocoder"] = "vocos"
         return RenderResult(audio=to_mono_float32(out), label_score=score, notes=notes)

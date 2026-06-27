@@ -3,9 +3,9 @@
 Layout under the output root::
 
     config.resolved.yaml   manifest.jsonl   stats.json
-    corpus/shard=NNN/      score_*.wav + byte-identical score_*.tsv   (accepted)
-    rejected/shard=NNN/    non-accepted samples (audio + reason)       (never trained on)
-    checkpoints/           streaming resume state (git-ignored scratch)
+    corpus/shard=NNN/<sample_id>/      audio.wav + byte-identical score.tsv  (accepted)
+    rejected/shard=NNN/<sample_id>/    non-accepted samples (audio + reason) (never trained on)
+    checkpoints/                       streaming resume state (git-ignored scratch)
 
 Accepted samples (and only those) land in ``corpus/``; every non-accepted status retains both its
 provenance and its audio under ``rejected/`` (FR-006a).
@@ -48,10 +48,11 @@ class CorpusStore:
     def paths_for(self, record: ProvenanceRecord, index: int) -> tuple[Path, Path]:
         """Return (audio_path, score_path) for a sample given its accept/reject status.
 
-        Originals keep their exact ``corpus/``/``rejected/`` location (SC-001 backstop). A
-        score-augmentation variant (``score_aug_axis`` set) is foldered under
-        ``<corpus|rejected>/augmented/<axis>/`` so variants never collide with or co-mingle with
-        originals (FR-016, SC-009).
+        Each sample gets its own directory ``shard=NNN/<sample_id>/`` with ``audio.wav`` and
+        ``score.tsv`` — a flat per-sample layout downstream loaders can iterate as one dir per item.
+        A score-augmentation variant (``score_aug_axis`` set) is foldered under
+        ``<corpus|rejected>/augmented/<axis>/`` so variants never co-mingle with originals
+        (FR-016, SC-009); originals keep their plain ``corpus/``/``rejected/`` location.
         """
         base = (
             self.corpus_dir
@@ -61,7 +62,9 @@ class CorpusStore:
         if record.score_aug_axis:
             base = base / "augmented" / record.score_aug_axis
         shard = self._shard_dir(base, index)
-        return shard / f"{record.sample_id}.wav", shard / f"{record.sample_id}.tsv"
+        sample_dir = shard / record.sample_id
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        return sample_dir / "audio.wav", sample_dir / "score.tsv"
 
     def write_sample(
         self,
@@ -81,6 +84,28 @@ class CorpusStore:
                 "score_path": str(score_path.relative_to(self.root)),
             }
         )
+
+    def write_accompaniment_sample(
+        self,
+        record: ProvenanceRecord,
+        mix: np.ndarray,
+        score_tsv: bytes,
+        index: int,
+        *,
+        stem: np.ndarray | None = None,
+    ) -> ProvenanceRecord:
+        """Write the accompaniment mix (+ optional stem) and byte-identical score (FR-015).
+
+        The mix is the corpus audio (the sample dir's ``audio.wav``); the Lego accompaniment stem,
+        when present, is written alongside as ``audio.stem.wav`` so the sample can be re-mixed at a
+        different vocal/accompaniment balance without regenerating (SC-008).
+        """
+        record = self.write_sample(record, mix, score_tsv, index)
+        if stem is not None:
+            audio_path, _ = self.paths_for(record, index)
+            stem_path = audio_path.with_suffix(".stem.wav")
+            write_wav(stem_path, stem)
+        return record
 
     # --- checkpoint / resume (SC-011) ---
 

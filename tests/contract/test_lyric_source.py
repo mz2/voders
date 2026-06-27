@@ -7,11 +7,10 @@ returns an all-``None`` plan (byte-identity path, SC-001); count reconciliation 
 
 from __future__ import annotations
 
-import pytest
-
 from voders.lyrics.models import LyricPlan, LyricSource
 from voders.lyrics.sources import (
     LyricSourceProtocol,
+    SuppliedSource,
     VowelSource,
     reconcile,
     resolve_source,
@@ -80,7 +79,32 @@ def test_resolve_source_automatic_is_implemented():
     assert resolve_source(LyricSource.AUTOMATIC).name == "automatic"
 
 
-@pytest.mark.parametrize("name", ["supplied", "generated"])
-def test_resolve_source_unimplemented_raises(name: str):
-    with pytest.raises(NotImplementedError):
-        resolve_source(name)
+def test_resolve_source_supplied_is_implemented():
+    """``supplied`` lands in US1 (FR-002); it resolves to a CPU source, not NotImplementedError."""
+    src = resolve_source("supplied")
+    assert isinstance(src, SuppliedSource)
+    assert src.name == "supplied"
+    assert src.requires_gpu() is False
+
+
+def test_resolve_source_generated_is_implemented():
+    """``generated`` lands in US4 (FR-011); resolves to a CPU-facing source (model out-of-proc)."""
+    src = resolve_source("generated")
+    assert src.name == "generated"
+    assert src.requires_gpu() is False
+
+
+def test_supplied_source_takes_cells_as_authored_and_flags_multisyllable():
+    # One single-syllable cell, one multi-syllable cell (taken as authored), one lyric-free note.
+    notes = [
+        Note(onset_s=0.0, offset_s=0.5, pitch_midi=60, lyric="la"),
+        Note(onset_s=0.5, offset_s=1.0, pitch_midi=62, lyric="winter"),
+        Note(onset_s=1.0, offset_s=1.5, pitch_midi=64),
+    ]
+    score = Score(score_id="s1", notes=notes)
+    plan = SuppliedSource().resolve(score, master_seed=1, voice_id="v1")
+    assert plan.source == LyricSource.SUPPLIED
+    # Cells are unchanged (FR-019: as authored, never re-segmented/truncated).
+    assert plan.syllables == ["la", "winter", None]
+    # Only the multi-syllable cell is flagged, by note index.
+    assert plan.multisyllable_notes == [1]

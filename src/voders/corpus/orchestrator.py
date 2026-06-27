@@ -14,6 +14,8 @@ from pathlib import Path
 from voders.config.loader import config_hash, write_resolved
 from voders.config.models import RunConfig
 from voders.corpus.store import CorpusStore
+from voders.lyrics.models import LyricPlan, LyricSource
+from voders.lyrics.sources import LyricLicenseRefused, LyricSourceProtocol, build_source
 from voders.manifest.io import ManifestWriter
 from voders.manifest.models import ProvenanceRecord, ValidationVerdict, VerdictStatus
 from voders.render.augmentor import Augmentor
@@ -53,6 +55,7 @@ class Orchestrator:
         *,
         timing: TimingRegistry | None = None,
         augmentor: Augmentor | None = None,
+        accompanist: object | None = None,
     ) -> None:
         self.config = config
         self.lanes = lanes
@@ -60,7 +63,55 @@ class Orchestrator:
         self.voices = VoiceRegistry(config.voices)
         self.timing = timing or self._default_timing(config, lanes)
         self.augmentor = augmentor
+        self.accompanist = accompanist
         self.config_hash = config_hash(config)
+        self._lyric_source = self._build_lyric_source(config)
+
+    @staticmethod
+    def _build_lyric_source(config: RunConfig) -> LyricSourceProtocol | None:
+        """Build the lyric source once, or ``None`` for the default ``vowel`` (lyric-free) run.
+
+        A ``vowel`` run never resolves lyrics, so output stays byte-identical to pre-feature
+        (SC-001) and the manifest's lyric axis keeps its inert defaults.
+        """
+        if config.lyrics.source == LyricSource.VOWEL:
+            return None
+        return build_source(
+            config.lyrics.source,
+            inventory=config.lyrics.inventory,
+            syllabifier=config.lyrics.syllabifier,
+            theme=config.lyrics.theme,
+            model=config.lyrics.model,
+            cache_dir=config.lyrics.cache_dir,
+            output_root=config.output_root,
+            languages=tuple(config.lyrics.languages),
+        )
+
+    def _lyric_plan(self, score: ParsedScore | None, voice: Voice) -> LyricPlan | None:
+        """Resolve the per-(score, voice) lyric plan, or ``None`` for a ``vowel`` run."""
+        if self._lyric_source is None or score is None:
+            return None
+        return self._lyric_source.resolve(
+            score.score, master_seed=self.config.master_seed, voice_id=voice.voice_id
+        )
+
+    @staticmethod
+    def _lyric_fields(plan: LyricPlan | None, result: RenderResult | None) -> dict[str, object]:
+        """Provenance lyric axis for a plan (empty => the record keeps vowel-default fields)."""
+        if plan is None:
+            return {}
+        articulated = bool(result.notes.get("lyric_articulated", False)) if result else False
+        fields: dict[str, object] = {
+            "lyric_source": plan.source.value,
+            "lyric_hash": plan.text_hash,
+            "lyric_articulated": articulated,
+            "lyric_multisyllable_supplied": len(plan.multisyllable_notes),
+            "lyric_language": plan.language,
+        }
+        if plan.model is not None:
+            fields["lyric_model"] = plan.model.model_id
+            fields["lyric_model_license"] = plan.model.license
+        return fields
 
     @staticmethod
     def _default_timing(config: RunConfig, lanes: dict[str, RendererLane]) -> TimingRegistry:
@@ -175,6 +226,24 @@ class Orchestrator:
                                 self._tally(summary, aug_record)
                                 self.store.mark_completed(aug_record.sample_id)
                                 index += 1
+
+                        # spec 002: lay accompaniment under an accepted vocal (corpus-internal).
+                        if (
+                            self.accompanist is not None
+                            and result is not None
+                            and record.verdict.status == VerdictStatus.ACCEPTED
+                        ):
+                            acc_record = self._accompany(
+                                base=record,
+                                result=result,
+                                ps=ps,
+                                voice=voice,
+                                index=index,
+                                manifest=manifest,
+                            )
+                            self._tally(summary, acc_record)
+                            self.store.mark_completed(acc_record.sample_id)
+                            index += 1
         return summary
 
     def _expand_work(
@@ -237,6 +306,54 @@ class Orchestrator:
             score_aug_seed=drop.seed,
         )
 
+    def _accompany(
+        self,
+        *,
+        base: ProvenanceRecord,
+        result: RenderResult,
+        ps: ParsedScore,
+        voice: Voice,
+        index: int,
+        manifest: ManifestWriter,
+    ) -> ProvenanceRecord:
+        """Lay accompaniment under an accepted base render and write the new sample (spec 002)."""
+        acc = self.accompanist
+        assert acc is not None
+        mode = acc.options.mode
+        sample_id = f"{base.sample_id}_accomp_{mode}"
+        base_seed = sample_seed(
+            self.config.master_seed, ps.score.score_id, voice.voice_id, f"accompaniment_{mode}"
+        )
+        out = acc.generate(
+            result.audio,
+            result.label_score,
+            source_vocal_sample_id=base.sample_id,
+            base_seed=base_seed,
+        )
+        # Labels are unchanged (the score still describes the mix): keep the byte-identical .tsv.
+        score_tsv = (
+            ps.raw_bytes if result.label_score == ps.score else serialize_score(result.label_score)
+        )
+        record = ProvenanceRecord(
+            sample_id=sample_id,
+            score_id=ps.score.score_id,
+            score_path="",
+            audio_path="",
+            lane="accompaniment",
+            voice_id=voice.voice_id,
+            seed=base_seed,
+            voice_license=voice.license,
+            consent_verified=voice.consent_verified,
+            config_hash=self.config_hash,
+            verdict=out.verdict,
+            accompaniment=out.provenance,
+        )
+        record = self.store.write_accompaniment_sample(
+            record, out.mix, score_tsv, index, stem=out.stem
+        )
+        manifest.append(record)
+        return record
+
     @staticmethod
     def _tally(summary: RunSummary, record: ProvenanceRecord) -> None:
         summary.attempted += 1
@@ -282,13 +399,21 @@ class Orchestrator:
             consent_verified=voice.consent_verified,
             config_hash=self.config_hash,
             verdict=verdict,
-            # Keep an audio-augmented variant in its score-augmentation subtree (FR-016).
+            # Carry both lineages so an audio-augmented variant keeps its score-augmentation subtree
+            # (FR-016) and its lyric provenance.
             base_score_id=base.base_score_id,
             score_aug_profile=base.score_aug_profile,
             score_aug_axis=base.score_aug_axis,
             score_aug_transform=base.score_aug_transform,
             score_aug_seed=base.score_aug_seed,
             dynamics_applied=base.dynamics_applied,
+            lyric_source=base.lyric_source,
+            lyric_hash=base.lyric_hash,
+            lyric_model=base.lyric_model,
+            lyric_model_license=base.lyric_model_license,
+            lyric_articulated=base.lyric_articulated,
+            lyric_multisyllable_supplied=base.lyric_multisyllable_supplied,
+            lyric_language=base.lyric_language,
         )
         record = self.store.write_sample(record, audio, score_tsv, index)
         manifest.append(record)
@@ -333,7 +458,42 @@ class Orchestrator:
             manifest.append(record)
             return record, None
 
-        result = lane.render(RenderRequest(score=ps.score, voice=voice, seed=seed, options=options))
+        # Lyric model license gate (FR-010), mirroring the donor-voice consent gate above: a refused
+        # generated model produces a license_refused record and no audio, surfaced in the manifest.
+        try:
+            plan = self._lyric_plan(ps, voice)
+        except LyricLicenseRefused as exc:
+            model = self.config.lyrics.model
+            record = ProvenanceRecord(
+                sample_id=sample_id,
+                score_id=ps.score.score_id,
+                score_path="",
+                audio_path="",
+                lane=lane_name,
+                voice_id=voice.voice_id,
+                seed=seed,
+                voice_license=voice.license,
+                consent_verified=voice.consent_verified,
+                config_hash=self.config_hash,
+                verdict=ValidationVerdict(status=VerdictStatus.LICENSE_REFUSED, reason=str(exc)),
+                lyric_source=LyricSource.GENERATED.value,
+                lyric_model=model.model_id if model else None,
+                lyric_model_license=model.license if model else None,
+            )
+            manifest.append(record)
+            return record, None
+        lyrics = plan.syllables if plan is not None else None
+        result = lane.render(
+            RenderRequest(
+                score=ps.score,
+                voice=voice,
+                seed=seed,
+                options=options,
+                lyrics=lyrics,
+                g2p_backend=self.config.lyrics.g2p_backend,
+                language=plan.language if plan is not None else "en-us",
+            )
+        )
         verdict = validator.validate(result.audio, result.label_score)
         lane_dev = result.notes.get("max_onset_dev_ms", 0.0)
         verdict = verdict.model_copy(
@@ -376,6 +536,7 @@ class Orchestrator:
             verdict=verdict,
             notes=result.notes,
             **self._aug_lineage(variant, dynamics_applied=dynamics_applied),
+            **self._lyric_fields(plan, result),
         )
         record = self.store.write_sample(record, result.audio, score_tsv, index)
         manifest.append(record)

@@ -69,6 +69,10 @@ class LyricsConfig(BaseModel):
     source: LyricSource = LyricSource.VOWEL
     inventory: str = "en_cv"
     g2p_backend: str = "espeak"
+    syllabifier: str = "en_rule"
+    # espeak language codes to spread phonetic coverage across (multilingual eval match). One
+    # language is chosen per sample, seeded. Default keeps runs English/single-language.
+    languages: list[str] = Field(default_factory=lambda: ["en-us"])
     melisma: str = "per_note"
     theme: str | None = None
     model: LyricModel | None = None
@@ -175,6 +179,41 @@ class ScoreAugmentationProfile(BaseModel):
     transpose: TransposeKnob | None = None
     humanize_time: HumanizeKnob | None = None
     volume: VolumeKnob | None = None
+
+
+class AccompanimentOptions(BaseModel):
+    """Accompaniment-stage options (contract: contracts/run-config-accompaniment.md).
+
+    Parsed from the ``accompaniment`` lane toggle's free-form options (``LaneToggle`` is
+    ``extra="allow"``), so enabling the stage is a non-breaking config addition (FR-008).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str = "lego"  # lego (vocal-preserving) | complete (one-pass)
+    backend: str = "fake"  # fake (CPU/CI) | acestep (GPU, `accomp` extra)
+    model_id: str = ""
+    license_policy: list[str] = Field(default_factory=lambda: ["MIT", "Apache-2.0", "CC-BY-4.0"])
+    target_instrument: str = "sustained pad"
+    free_time: bool = True
+    bpm: float | None = None
+    takes: int = 1
+    target_snr_db: float | list[float] = 12.0
+
+    @model_validator(mode="after")
+    def _check(self) -> AccompanimentOptions:
+        if self.mode not in ("lego", "complete"):
+            raise ValueError(f"accompaniment.mode must be lego|complete, got {self.mode!r}")
+        if self.free_time and self.bpm is not None:
+            raise ValueError("accompaniment.bpm must be null when free_time is true (FR-005)")
+        if self.takes < 1:
+            raise ValueError(f"accompaniment.takes must be >= 1, got {self.takes}")
+        return self
+
+
+def parse_accompaniment_options(options: dict[str, object]) -> AccompanimentOptions:
+    """Validate the ``accompaniment`` lane options into a typed model (FR-005/008)."""
+    return AccompanimentOptions.model_validate(options)
 
 
 class RunConfig(BaseModel):

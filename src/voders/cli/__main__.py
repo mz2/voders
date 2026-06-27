@@ -36,6 +36,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_stats.add_argument("--manifest", required=True)
     p_stats.add_argument("--out", default=None)
 
+    p_splits = sub.add_parser("splits", help="write source-stratified train/val splits (issue #7)")
+    p_splits.add_argument("--manifest", required=True)
+    p_splits.add_argument("--val-fraction", type=float, default=0.2)
+    p_splits.add_argument("--seed", type=int, default=0)
+    p_splits.add_argument(
+        "--stratify",
+        default="lane,voice_id,augmentation_profile",
+        help="comma-list of provenance fields to stratify by",
+    )
+    p_splits.add_argument("--out", default=None)
+
     return parser
 
 
@@ -61,6 +72,17 @@ def main(argv: list[str] | None = None) -> int:
         from voders.cli.stats import stats_command
 
         return stats_command(args.manifest, out=args.out)
+    if args.command == "splits":
+        from voders.cli.splits import splits_command
+
+        stratify = tuple(s.strip() for s in args.stratify.split(",") if s.strip())
+        return splits_command(
+            args.manifest,
+            out=args.out,
+            val_fraction=args.val_fraction,
+            seed=args.seed,
+            stratify=stratify,
+        )
     return 2  # pragma: no cover - argparse requires a subcommand
 
 

@@ -221,8 +221,23 @@ __marimo__/
 # Only fixtures (LFS), the resolved config, manifest, and stats are version-controlled.
 /out/
 
+# Training run outputs (checkpoints, TensorBoard events, local wandb runs) from
+# `just train` / train_soulx.sh (--output-dir BASIC_PITCH_CHALLENGE).
+/BASIC_PITCH_CHALLENGE/
+
 # voders: downloaded model weights are never committed (large, consent-gated assets).
-/models/
+# Exception: the small CC0/permissive donor voices are versioned via LFS so the data-augmentation
+# pipeline has reproducible source material — Freesound (CC0, see freesound/ATTRIBUTION.txt) and the
+# VocalSet singers (CC BY 4.0, Wilkins et al.; see models/donors/VOCALSET_ATTRIBUTION.txt).
+/models/*
+!/models/donors/
+/models/donors/*
+!/models/donors/freesound/
+!/models/donors/vocalset_*.wav
+!/models/donors/VOCALSET_ATTRIBUTION.txt
 
 # Cloned third-party backend repos (fetched at runtime, not part of this repo).
 /backends/*/seed-vc/
+
+# Staged trainer input dir (assembled from datasets/ by `just train`)
+syntheticdataset_soulx/

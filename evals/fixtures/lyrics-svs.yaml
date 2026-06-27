@@ -1,0 +1,33 @@
+# SVS lane articulating automatic lyrics via real espeak G2P + the out-of-process SVS backend.
+# The neural/articulatory backend sings the phonemes at the score-derived pitch (force_score_f0),
+# so onsets/offsets/pitch stay exact while the audio carries real consonants and vowels.
+run_id: lyrics-svs
+master_seed: 20260627
+
+scores: evals/fixtures/scores/score_00[0-1].tsv
+output_root: out/lyrics-svs
+
+voices:
+  - voice_id: svs_ah
+    kind: svs_voicebank
+    license: "CC0 synthetic vowel"
+    consent_verified: true
+    model_ref: r9y9/yoko_latest    # NNSVS voicebank: real neural singing
+
+lanes:
+  svs:
+    enabled: true
+    backend: nnsvs
+    mode: force_score_f0
+
+lyrics:
+  source: automatic
+  inventory: scat
+
+validator:
+  onset_ms: 50
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0

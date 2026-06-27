@@ -1,0 +1,41 @@
+name: train-soulx-baseline
+
+# Runs the SoulX Basic Pitch baseline on the repo's self-hosted, NVIDIA-GPU-equipped runner.
+# The runner must provide the Python training dependencies and the `syntheticdataset_soulx` and
+# `klangiodataset` directories relative to the checked-out repository.
+# Triggered manually, when a GitHub Release is published, or when the `train` label is applied to
+# an issue.
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  train:
+    name: Train SoulX baseline
+    if: github.event_name != 'issues' || github.event.label.name == 'train'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Check GPU
+        run: nvidia-smi
+
+      - name: Train
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+        run: just train

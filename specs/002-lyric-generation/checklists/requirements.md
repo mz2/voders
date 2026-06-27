@@ -76,3 +76,35 @@ Applied the analyze report's actionable findings (no new feature; edits only):
 - **T2 (plan tree)**: plan source tree now lists `src/voders/lyrics/data/en_cv.txt`.
 - Re-validated: FR/SC coverage remains 100%; FR-005 upgraded from test-light to tested; no new
   `[NEEDS CLARIFICATION]`.
+
+### Amendment 2026-06-27 — re-specify against issue #4 + one-syllable-per-note requirement
+
+- Re-ran `/speckit-specify` against [issue #4](https://github.com/mz2/voders/issues/4) in a dedicated
+  worktree on the existing `002-lyric-generation` branch (rather than creating a duplicate `004-…`
+  feature). Confirmed the spec already covers all four of the issue's open questions (storage shape,
+  T1-vs-T2 sufficiency, melisma policy, phonetic-coverage statistic) — no gaps re-opened.
+- Added the operator's new requirement: **vocals are segmented into syllables, one syllable per note.**
+  Edits: Clarifications session Q3 entry; US4 acceptance scenario 1 (syllable-level count-matching);
+  two edge cases (multi-syllable/free text segmentation, un-syllabifiable token); **FR-019**
+  (one-syllable-per-note, deterministic + replay-stable, fallback via FR-008); **SC-010** (100% of
+  accepted notes carry exactly one well-formed syllable); Key Entities (Lyric redefined as a syllable;
+  new Syllable Segmentation entity); one Assumption (deterministic English syllabification sufficient
+  for v1).
+- Re-validated: all checklist items still pass; SC-010 is measurable (100% / one-per-note) and
+  technology-agnostic; FR-019 is testable; 0 `[NEEDS CLARIFICATION]`.
+- **Downstream sync still owed**: plan.md, data-model.md, and tasks.md predate FR-019/SC-010. Re-run
+  `/speckit-plan` then `/speckit-tasks` (or `/speckit-analyze`) to add the syllable-segmentation step,
+  its determinism/replay tests, and an SC-010 eval gate before implementation continues.
+
+### Clarify session 2026-06-27 — FR-019 follow-ups
+
+- `/speckit-clarify` asked 2 questions (both resolving FR-019/SC-010 decision points), 0 left
+  outstanding:
+  - **Supplied-lyric scope**: FR-019 governs only the automatic + generated sources. Operator-supplied
+    cells are taken as authored; a multi-syllable supplied cell is sung as written and flagged in
+    provenance (FR-009) + stats (FR-014), never re-segmented/truncated/rejected. (FR-019 + new edge
+    case + Clarifications bullet.)
+  - **SC-010 verification altitude**: structural invariant on the segmenter (one syllable token per
+    note, deterministic, text-level) — no acoustic syllable-counting. (SC-010 + Clarifications bullet.)
+- Sections touched: Clarifications (2 bullets), Edge Cases (1), FR-019, SC-010. Re-validated: 0
+  `[NEEDS CLARIFICATION]`; all checklist items still pass.

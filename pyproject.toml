@@ -28,17 +28,41 @@ cpu = [
     # pyworld 0.3.5 imports the (deprecated) pkg_resources at module load.
     "setuptools<81",
 ]
-# GPU lanes (neural SVS, voice conversion). Imported lazily so the CPU baseline is unaffected.
+# GPU lanes (neural SVS, voice conversion) + neural vocoder. Imported lazily so the CPU baseline
+# is unaffected.
 gpu = [
     "torch>=2.12",
     "torchaudio",
+    "torchcodec",  # torchaudio.load dispatches decoding through torchcodec
     "torchcrepe>=0.0.24",
+    "vocos>=0.1",  # modern neural mel-vocoder for the deterministic lane's `vocoder: vocos` option
 ]
-# Lyric articulation (FR-006): grapheme-to-phoneme via phonemizer/espeak-ng. Imported lazily so the
-# CPU baseline and lyric-free runs never load it. The espeak-ng *system* library is a separate
-# prerequisite (e.g. `apt install espeak-ng`); see README.
-lyrics = [
-    "phonemizer>=3.3",
+# Vocal-conditioned accompaniment (spec 002). GPU; imported lazily so the CPU baseline / fake
+# backend stay torch-free (FR-009). `demucs` is the source separator used to extract the
+# accompaniment stem in Lego mode. The ACE-Step 1.5 XL inference package is installed out-of-band
+# (package name / Python 3.14 wheel pending verification — research.md open item 3).
+accomp = [
+    "torch>=2.12",
+    "torchaudio",
+    "demucs>=4.0",
+]
+# Basic Pitch training stack imported from MML26-singing-synthesis. Torch follows this project's
+# Python 3.14-compatible GPU constraint instead of the source project's older 2.8 pin.
+training = [
+    "torch>=2.12",
+    "torchvision",
+    "torchaudio",
+    "torchcodec",  # torchaudio.load dispatches decoding through torchcodec
+    "librosa",
+    "pandas",
+    "tqdm",
+    "matplotlib",
+    "mir_eval",
+    "pytorch-lightning>=2.6.5",
+    "tensorboard",
+    "wandb",
+    "nnAudio",
+    "pretty_midi",
 ]
 dev = [
     "ruff>=0.15",
@@ -49,6 +73,23 @@ dev = [
 donors = [
     "datasets>=2.19",
     "librosa>=0.11",
+]
+# Lyric articulation: grapheme-to-phoneme (G2P) for the SVS lane. Imported lazily inside
+# voders.lyrics.g2p, so the CPU baseline and lyric-free runs never load it (FR-005). Needs the
+# espeak-ng system library (`apt install espeak-ng`).
+lyrics = [
+    "phonemizer>=3.3",
+]
+# Model-driven generated lyrics (US4): a real instruct LLM via transformers, run on GPU. Imported
+# lazily inside voders.lyrics.llm, so the CPU baseline and non-generated runs never load it (FR-005).
+# Depends on torch from the `gpu` extra.
+lyrics-gpu = [
+    "transformers>=4.44",
+    "accelerate>=0.33",
+]
+# Microphone capture for `evals/record_donor.py --record`. Importing a WAV needs only the cpu extra.
+record = [
+    "sounddevice>=0.5",
 ]
 
 [project.scripts]
@@ -93,6 +134,13 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    # GPU/model tests (real LLM, neural SVS). Skipped automatically without CUDA; run them in their
+    # own process with the gpu extras so torch-heavy ops don't collide with the CPU-baseline tests:
+    #   uv sync --extra cpu --extra lyrics --extra gpu --extra lyrics-gpu
+    #   uv run pytest -m gpu
+    "gpu: requires a GPU + the gpu/lyrics-gpu extras (real LLM / neural SVS)",
+]
 filterwarnings = [
     # pyworld imports the deprecated pkg_resources at module load (upstream, not our code).
     "ignore:pkg_resources is deprecated:UserWarning",

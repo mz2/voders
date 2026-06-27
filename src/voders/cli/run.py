@@ -8,7 +8,8 @@ from pathlib import Path
 from voders.config.loader import load_config
 from voders.config.models import RunConfig
 from voders.corpus.orchestrator import LANE_VOICE_KINDS, Orchestrator
-from voders.render.registry import build_augmentor, build_lanes
+from voders.render.registry import build_accompanist, build_augmentor, build_lanes
+from voders.validate.validator import Validator
 
 
 def _project_effective_count(config: RunConfig) -> tuple[int, int]:
@@ -71,7 +72,8 @@ def run_command(
 
     lanes = build_lanes(config)
     augmentor = build_augmentor(config)
-    orchestrator = Orchestrator(config, lanes, augmentor=augmentor)
+    accompanist = build_accompanist(config, Validator(config.validator))
+    orchestrator = Orchestrator(config, lanes, augmentor=augmentor, accompanist=accompanist)
     summary = orchestrator.run(resume=resume)
 
     print(f"run {summary.run_id}: attempted={summary.attempted} accepted={summary.accepted}")

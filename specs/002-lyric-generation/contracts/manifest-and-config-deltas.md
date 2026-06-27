@@ -16,6 +16,7 @@ identically to today (SC-001). The 001 schemas remain authoritative
 | `lyric_model` | string \| null | `null` | FR-010 (generated only) |
 | `lyric_model_license` | string \| null | `null` | FR-010 (generated only) |
 | `lyric_articulated` | boolean | `false` | FR-006 — true only when the lane sang phonemes |
+| `lyric_multisyllable_supplied` | integer | `0` | FR-019 — count of supplied cells sung as authored that were not a single syllable (0 for vowel/automatic/generated) |
 
 **Audit query (SC-006):** an end-of-run scan asserts every record has a `lyric_source`, every
 non-`vowel` record has a `lyric_hash`, and zero records carry a `generated` source whose
@@ -29,6 +30,7 @@ lyrics:
   source: vowel            # vowel | supplied | automatic | generated   (FR-013, default vowel)
   inventory: en_cv         # checked-in syllable/phoneme inventory for `automatic`
   g2p_backend: espeak      # articulation backend (lazy phonemizer/espeak-ng)
+  syllabifier: en_rule     # deterministic segmenter: split generated words→syllables, flag supplied multi-syllable cells (FR-019)
   melisma: per_note        # per_note | sustain_ties
   # generated-only (validation error if set with another source):
   theme: null              # operator-supplied theme string — the ONLY theming channel (FR-011)

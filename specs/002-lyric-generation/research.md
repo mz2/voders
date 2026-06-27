@@ -68,7 +68,7 @@ rejected (reinvents espeak-ng, English-only).
 **Decision:** **Reuse 001's existing FR-007 safety net unchanged.** Lyric articulation feeds the same
 two modes: `force_score_f0` (pitch/onset/offset correct by construction; `label_score == score`) and
 `rederive_labels` (humanize, render, re-derive onsets/offsets from the rendered audio via
-`voders.validate.rederive`, reject if any onset drifts >50 ms, SC-010/SC-002). No new alignment code.
+`voders.validate.rederive`, reject if any onset drifts >50 ms, SC-002). No new alignment code.
 
 **Rationale:** Pre-onset consonants are the one real alignment threat lyrics add, and 001 already has
 the exactly-right gate for "expressive timing might break the label." The re-derivation envelope
@@ -123,6 +123,31 @@ resolves issue #4's open question (sidecar vs. field) in favor of the field/colu
 — rejected now that the prototype exists; the 4th column is simpler, keeps one artifact per score, and
 preserves byte-identity for lyric-free scores anyway.
 
+## Decision L7 — Syllable segmentation (one syllable per note, FR-019)
+
+**Decision:** A small, **deterministic CPU syllable segmenter** (`voders.lyrics.syllabify`) with two
+entry points: `segment(text) -> [syllable]`, used by the `generated` source to split model-produced
+words/lines into singable syllables before aligning them 1:1 to notes; and `syllable_count(text)`, used
+by the `supplied` source only to **flag** (not transform) a cell that is not a single syllable.
+Implementation: a dictionary lookup for known words (the same checked-in pronunciation data the CV
+inventory ships with) plus a vowel-group rule-based fallback for unknown tokens. The `automatic`
+sampler needs no segmentation — it emits one CV syllable per note by construction.
+
+**Rationale:** FR-019 requires each sung note to carry exactly one syllable; the only source that emits
+multi-syllable text is `generated`, so segmentation is needed there, and `supplied` is operator-owned
+so it is flagged rather than altered (clarify decision). A pure rule+dictionary function is
+deterministic — so `generated` replay over the pinned text re-segments identically (FR-012) — and CPU-
+only, keeping the no-GPU baseline (FR-005). SC-010 is then a cheap **structural** assertion on the
+resolved `LyricPlan` (one token per note), with no acoustic syllable-counting needed (clarify
+decision).
+
+**Alternatives considered:** Acoustic syllable verification on rendered audio — rejected (noisy,
+expensive, and lyrics are not labels, so audio-level syllable truth is out of scope). A heavyweight
+linguistic syllabifier (e.g. a trained model) — rejected (overkill for a phonetic-coverage goal where
+syllables need only be singable, not linguistically authoritative). Re-segmenting or rejecting supplied
+cells — rejected (supplied text is the operator's responsibility; silent edits or hard rejection lose
+operator intent — clarify decision).
+
 ## Resolved choices summary
 
 | Topic | Choice |
@@ -133,5 +158,6 @@ preserves byte-identity for lyric-free scores anyway.
 | Label safety | reuse 001 FR-007 force-score-F0 / rederive_labels unchanged |
 | Generated reproducibility | cache-as-artifact `<output_root>/lyrics/<hash>.jsonl`, pinned in manifest |
 | Storage shape | `Note.lyric` + optional 4th `.tsv` column (the prototype) |
+| Syllabification (FR-019) | deterministic `syllabify` (dict + rule fallback); `segment` for `generated`, `syllable_count` flag for `supplied`; structural SC-010 check |
 
 No NEEDS CLARIFICATION remain.

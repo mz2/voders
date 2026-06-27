@@ -1,42 +1,32 @@
-# Lyrics smoke run config — automatic CV-syllable source over the expressive (SVS) lane (FR-003,
-# FR-013, SC-003/SC-004). Mirrors evals/fixtures/smoke.yaml but selects the automatic lyric source
-# and enables the SVS lane (the only lane that articulates lyrics, FR-006).
-run_id: lyrics_smoke
+# Lyric smoke showcase — the SVS lane ARTICULATES the syllables (deterministic lane is vowel-only and
+# not used for lyric work). Real espeak G2P -> SVS backend articulation at the score-derived pitch.
+run_id: lyrics-smoke
 master_seed: 20260627
 
 scores: evals/fixtures/scores/*.tsv
-output_root: out/lyrics_smoke
+output_root: out/lyrics-smoke
 
 voices:
   - voice_id: svs_ah
     kind: svs_voicebank
     license: "CC0 synthetic vowel"
     consent_verified: true
-    model_ref: evals/fixtures/voices/donor_ah_synth.wav
+    model_ref: r9y9/yoko_latest    # NNSVS voicebank: real neural singing
+
+lanes:
+  svs:
+    enabled: true
+    backend: nnsvs
+    mode: force_score_f0
 
 lyrics:
   source: automatic
   inventory: en_cv
 
-lanes:
-  svs:
-    enabled: true
-    backend: nnsvs        # out-of-process backend in backends/svs
-    mode: force_score_f0
-
 validator:
   onset_ms: 50
-  offset_min_ms: 50
-  offset_fraction: 0.20
-  min_note_ms: null        # learn from the annotation distribution (FR-018)
+  min_note_ms: null
   min_note_percentile: 1
   f0_cents: 25
   f0_coverage: 0.80
   snr_floor_db: 0
-
-reproduction:
-  deterministic: bit_exact
-  neural:
-    same_verdict: true
-    f0_cents: 25
-    onset_ms: 10

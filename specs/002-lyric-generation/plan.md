@@ -2,6 +2,10 @@
 
 **Branch**: `002-lyric-generation` | **Date**: 2026-06-27 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/002-lyric-generation/spec.md`
+**Amended 2026-06-27** (post-`/speckit-clarify`): folded in FR-019 (one syllable per note) + SC-010
+(verified as a structural invariant on the segmenter, not acoustically), and the clarified handling of
+operator-supplied multi-syllable cells (taken as authored, flagged in provenance/stats — never
+re-segmented or rejected). Adds a deterministic `syllabify` component.
 
 ## Summary
 
@@ -63,7 +67,11 @@ pre-feature pipeline (SC-001). Lyric-driven SVS samples MUST meet the same onset
 relative to the lyric-free render of the same (score, voice, seed)** — pitch within ±25 cents
 (neutral by construction in force-score-F0 mode), onset/offset within 10 ms after constant-delay
 compensation, else reject (FR-015/FR-016/FR-017, SC-008/SC-009). Automatic-source lyrics MUST be
-seed-reproducible independent of worker count (SC-004).
+seed-reproducible independent of worker count (SC-004). **The `automatic` and `generated` sources MUST
+emit exactly one singable syllable per note** (FR-019): the CV sampler draws one syllable per note by
+construction, and generated free text is run through a deterministic syllable segmenter before 1:1
+note alignment. Operator-`supplied` lyrics are out of FR-019's scope — taken as authored; a supplied
+cell that is not a single syllable is flagged in provenance/stats, never re-segmented or rejected.
 **Scale/Scope**: Same 10k–100k samples/run as 001; the lyric layer adds one per-note string and one
 per-sample provenance axis.
 
@@ -83,6 +91,11 @@ per-sample provenance axis.
   - zero dropped/added/shifted note labels across all count mismatches (SC-005),
   - every record carries `lyric_source` + `lyric_hash`; zero license-refused lyric models (SC-006),
   - generated-lyric run replays from the pinned artifact with zero model re-invocations (SC-007),
+  - **one-syllable-per-note (SC-010, FR-019):** a *structural* assertion on the resolved `LyricPlan`
+    for the `automatic`/`generated` sources — exactly one syllable token aligned per note, zero notes
+    carrying a sub-syllable fragment or a multi-syllable cluster (no acoustic syllable-counting). The
+    same suite asserts a supplied multi-syllable cell is sung as authored and surfaced as a flagged
+    count in provenance + stats, with zero supplied cells dropped/rejected.
   - **differential no-shift check (SC-008/SC-009, FR-018):** render the fixture set once with lyrics
     and once lyric-free for the *same seeds*, then assert each accepted note's pitch is within ±25
     cents and its onset/offset within 10 ms of the lyric-free baseline (after constant-delay
@@ -99,7 +112,7 @@ per-sample provenance axis.
 
 | Principle | Gate | Status |
 |-----------|------|--------|
-| I. Red-Green-Refactor TDD | `/speckit-tasks` emits a failing test per story before impl (parse 4th column, automatic-source determinism, SVS phoneme articulation + safety net, provenance/license, generated replay) | PASS — planned |
+| I. Red-Green-Refactor TDD | `/speckit-tasks` emits a failing test per story before impl (parse 4th column, automatic-source determinism, SVS phoneme articulation + safety net, provenance/license, generated replay, **one-syllable-per-note segmentation determinism + structural SC-010 assertion + supplied multi-syllable flag**) | PASS — planned |
 | II. Zero-Warning Linting | `ruff` + `ruff format` clean; lazy `phonemizer` import guarded | PASS — toolchain reused |
 | III. Docs current with repo | spec/plan/quickstart + README prerequisites (espeak-ng) updated in the same change set; CLAUDE.md plan pointer updated | PASS |
 | IV. Evaluation-First | Runnable harness + runnable eval defined above, mapped to SC-001..SC-007, before feature code | PASS — strategy captured |
@@ -136,6 +149,7 @@ src/voders/
 │   ├── models.py        # LyricSource enum, LyricPlan (per-note syllables), LyricModel (license), Phoneme run
 │   ├── sources.py       # resolve a Score → LyricPlan for vowel | supplied | automatic | generated (FR-003/011/013)
 │   ├── sampler.py       # seeded CV-syllable sampler; deterministic from sample_seed(stage="lyrics") (FR-004)
+│   ├── syllabify.py     # NEW deterministic syllable segmentation: segment(text)->[syllable] for `generated`, syllable_count(text) to flag multi-syllable `supplied` cells (FR-019)
 │   ├── g2p.py           # syllables → phonemes (lazy phonemizer/espeak-ng), mapped to note durations (FR-006)
 │   ├── cache.py         # pin/lookup generated lyric text as <output_root>/lyrics/<hash>.jsonl (FR-012)
 │   ├── coverage.py      # phonetic-coverage statistic for the stats report (FR-014, SC-003)
@@ -156,7 +170,7 @@ backends/
 tests/
 ├── contract/            # lyric-source interface; manifest record + config schema deltas
 ├── integration/         # US1 SVS-sings-lyrics; US2 automatic determinism; US3 provenance/license; US4 generated replay
-└── unit/                # parse 4th column (from prototype test_lyrics.py); sampler; g2p mapping; cache; coverage
+└── unit/                # parse 4th column (from prototype test_lyrics.py); sampler; syllabify (segmentation determinism + one-per-note); g2p mapping; cache; coverage
 
 evals/
 └── fixtures/            # lyrics-smoke.yaml + lyric-free, supplied-lyric scores + CV inventory
