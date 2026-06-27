@@ -162,7 +162,27 @@ in the orchestrator. License is checked before spending GPU time.
 
 ---
 
-## Open verification items (GPU run — backend is implemented, not yet hardware-verified)
+## Hardware verification (DGX Spark / NVIDIA GB10, 2026-06-27)
+
+Verified on the actual GPU (CUDA 13.0, torch 2.12.1+cu130, sm_121):
+- **torch + CUDA** run on the GB10 (GPU matmul confirmed).
+- **Demucs separator path (Lego)** verified end-to-end on the GPU against the live library:
+  `get_model("htdemucs")` → sources `['drums','bass','other','vocals']`, **44.1 kHz / stereo**;
+  `apply_model(model, wav[None], device="cuda")[0]` → `(4, 2, N)`. This exposed and fixed a real
+  bug — the input must be resampled to the model's 44.1 kHz rate (now done via
+  `demucs.audio.convert_audio`, 48 kHz↔44.1 kHz around `apply_model`). The full Lego backend path
+  (fake generator → real Demucs → 22,050 mono stem, length-matched) runs on the GPU.
+- **preflight() hardened**: importing torch inside pytest surfaced a torch/triton
+  `TORCH_LIBRARY` double-registration `RuntimeError`; `preflight` now catches *any* torch
+  import/init failure (not just `ImportError`) and degrades gracefully (FR-013).
+
+Still **not** hardware-verified (the only remaining seam): the `ACEStepPipeline` call itself. The
+`acestep` package is not on PyPI (it is a GitHub research project), and its "1.5 XL / Lego /
+Complete" form from the source report could not be confirmed; the generator adapter is coded to the
+real ACE-Step **audio2audio file-I/O convention** (write a reference wav, pass `ref_audio_input` +
+`save_path`, read the result), which still needs confirmation against the installed checkpoint.
+
+## Open verification items (one seam left — ACE-Step generator call)
 
 The `AceStepBackend` (`render/backends/acestep.py`) is a **full implementation** against the real
 ACE-Step + Demucs APIs (no stub / `NotImplementedError`): caption construction, 22.05↔48 kHz

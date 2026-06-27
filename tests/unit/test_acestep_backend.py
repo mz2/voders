@@ -96,14 +96,15 @@ def test_caption_metered_includes_bpm():
     assert "strings" in cap
 
 
-def test_preflight_skips_without_gpu():
-    # On a CPU-only box (no CUDA / no weights), the real backend must report a skip reason so the
-    # lane degrades gracefully (FR-013) rather than crashing mid-run.
+def test_preflight_skips_when_backend_unavailable():
+    # When torch/CUDA or the ACE-Step package is missing, the real backend reports a skip reason so
+    # the lane degrades gracefully (FR-013) instead of crashing mid-run. preflight() must NEVER
+    # raise — any torch import/init failure is caught and turned into a skip reason.
     reason = AceStepBackend().preflight("lego")
     assert reason is not None and isinstance(reason, str)
 
 
-def test_build_accompanist_skips_acestep_without_gpu():
+def test_build_accompanist_skips_acestep_when_unavailable():
     from voders.config.models import LaneToggle, RunConfig, ValidatorConfig
     from voders.render.registry import build_accompanist
     from voders.validate.validator import Validator

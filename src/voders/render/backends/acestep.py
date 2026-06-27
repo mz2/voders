@@ -112,38 +112,43 @@ class _AceStepGenerator:
     ) -> np.ndarray:  # pragma: no cover - requires GPU + weights
         self._ensure()
         assert self._pipe is not None
-        # ⚠️ VERIFY against the pinned release's generate_music.py (open item 2). Both Lego and
-        # Complete condition on the vocal via ACE-Step's audio-to-audio editing path; "Complete"
-        # holds the vocal in place (lower edit strength), "Lego" lets the generation drift further
-        # since only its non-vocal stems are kept downstream.
+        import os
+        import tempfile
+
+        import soundfile as sf
+
+        # ACE-Step's audio2audio path takes a reference-audio FILE and writes its result to
+        # ``save_path`` (the documented convention). "Complete" holds the vocal in place (lower edit
+        # strength); "Lego" drifts further since only its non-vocal stems are kept downstream.
+        # ⚠️ VERIFY arg names against the installed checkpoint's generate_music.py (open item 1/3).
         strength = 0.55 if self.mode == MODE_COMPLETE else 0.75
-        result = self._pipe(
-            prompt=caption,
-            audio_duration=float(duration_s),
-            audio2audio_enable=True,
-            ref_audio_input=vocal_48k_stereo,
-            ref_audio_strength=strength,
-            manual_seeds=[int(seed)],
-            infer_step=60,
-            guidance_scale=7.5,
-            format="wav",
-        )
-        return _normalize_pipeline_output(result)
-
-
-def _normalize_pipeline_output(result: object) -> np.ndarray:  # pragma: no cover - GPU path
-    """Coerce an ACE-Step return (ndarray, tensor, or saved path/list) to a 48 kHz stereo array."""
-    if isinstance(result, list | tuple) and result:
-        result = result[0]
-    if isinstance(result, str):
-        from voders.audio import read_wav
-
-        data, _ = read_wav(result)
-        return np.stack([data, data], axis=-1) if data.ndim == 1 else data
-    arr = np.asarray(result, dtype=np.float32)
-    if arr.ndim == 1:
-        arr = np.stack([arr, arr], axis=-1)
-    return arr
+        tmp = tempfile.mkdtemp(prefix="acestep_")
+        ref_path = os.path.join(tmp, "ref.wav")
+        out_path = os.path.join(tmp, "out.wav")
+        try:
+            sf.write(ref_path, vocal_48k_stereo, _NATIVE_SR, subtype="FLOAT")
+            self._pipe(
+                format="wav",
+                audio_duration=float(duration_s),
+                prompt=caption,
+                lyrics="",
+                infer_step=60,
+                guidance_scale=15.0,
+                scheduler_type="euler",
+                omega_scale=10.0,
+                manual_seeds=str(int(seed)),
+                audio2audio_enable=True,
+                ref_audio_strength=strength,
+                ref_audio_input=ref_path,
+                save_path=out_path,
+            )
+            data, _ = sf.read(out_path, dtype="float32", always_2d=True)  # (N, channels)
+        finally:
+            for p in (ref_path, out_path):
+                if os.path.exists(p):
+                    os.remove(p)
+            os.rmdir(tmp)
+        return data if data.shape[1] == 2 else np.repeat(data, 2, axis=1)
 
 
 class _DemucsSeparator:
@@ -169,15 +174,19 @@ class _DemucsSeparator:
         self._ensure()
         import torch
         from demucs.apply import apply_model
+        from demucs.audio import convert_audio
 
-        assert self._model is not None
-        wav = torch.from_numpy(np.ascontiguousarray(mix_48k_stereo.T, dtype=np.float32))
-        sources = apply_model(self._model, wav[None], device=self.device)[0]
-        names = list(self._model.sources)
-        accomp = sum(
-            sources[i] for i, n in enumerate(names) if n != "vocals"
-        )  # drums + bass + other
-        return np.ascontiguousarray(accomp.cpu().numpy().T, dtype=np.float32)
+        model = self._model
+        assert model is not None
+        # demucs htdemucs runs at 44.1 kHz / stereo (verified live): resample the 48 kHz input to
+        # the model rate, separate, then resample the summed non-vocal stems back to 48 kHz.
+        wav = torch.from_numpy(np.ascontiguousarray(mix_48k_stereo.T, dtype=np.float32))  # (2, N)
+        ref = convert_audio(wav, _NATIVE_SR, model.samplerate, model.audio_channels)
+        sources = apply_model(model, ref[None], device=self.device)[0]
+        names = list(model.sources)
+        accomp = sum(sources[i] for i, n in enumerate(names) if n != "vocals")  # drums+bass+other
+        accomp = convert_audio(accomp, model.samplerate, _NATIVE_SR, 2)
+        return np.ascontiguousarray(accomp.cpu().numpy().T, dtype=np.float32)  # (N, 2)
 
 
 class AceStepBackend:
@@ -223,8 +232,8 @@ class AceStepBackend:
             return None
         try:
             import torch
-        except ImportError:
-            return "torch not installed — install the `accomp` extra (uv sync --extra accomp)"
+        except Exception as exc:  # noqa: BLE001 - any torch import/init failure → graceful skip
+            return f"torch unavailable ({type(exc).__name__}) — install the `accomp` extra"
         if not torch.cuda.is_available():
             return "no CUDA GPU available for the ACE-Step backend"
         import importlib.util
