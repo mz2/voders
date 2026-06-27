@@ -3,7 +3,7 @@
 **Feature Branch**: `002-lyric-generation`
 **Created**: 2026-06-27
 **Status**: Draft
-**Input**: User description: "Please specify a solution to mz2/voders/issues/4 taking the prototype on branch \"lyrics\" also into account"
+**Input**: User description: "Please specify a solution to mz2/voders/issues/4 taking the prototype on branch \"lyrics\" also into account" — re-specified against [issue #4](https://github.com/mz2/voders/issues/4) on 2026-06-27, adding the one-syllable-per-note articulation requirement.
 
 ## Context
 
@@ -45,6 +45,21 @@ that foundation: it makes lyrics **audible** (sung as phonemes by the expressive
   window and is **not** the labeled onset; the validator's timing comparison targets the vowel onset
   (with any method group delay subtracted, 001 FR-019). A net residual shift the system cannot
   compensate causes rejection, not relabeling.
+- Q: What is the granularity of a sung lyric unit — can a note carry a whole word or a sub-syllable
+  fragment? → A: **Exactly one syllable per note.** Whatever a lyric source produces (a word, a phrase,
+  or free generated text) MUST be segmented into well-formed singable syllables and aligned 1:1 with
+  notes, so each note articulates a single complete syllable — never a partial phoneme fragment, never
+  a multi-syllable cluster crammed onto one note, and never (in v1) one syllable stretched across
+  multiple notes. Notes with no syllable after segmentation take the open-vowel fallback (FR-008).
+- Q: Does the one-syllable-per-note rule (FR-019) also govern operator-supplied lyrics (the 4th score
+  column)? → A: **No.** FR-019 governs only the **automatic** and **generated** sources. Operator-
+  supplied lyrics are taken **as authored** — the operator's responsibility. A supplied cell holding a
+  multi-syllable word is sung as authored on its note and **flagged in provenance/stats** as a multi-
+  syllable supplied cell; it is never silently re-segmented, truncated, dropped, or rejected.
+- Q: How is SC-010 ("exactly one well-formed syllable per note") verified? → A: As a **structural
+  invariant on the segmentation step** — the harness asserts the segmenter emits exactly one syllable
+  token aligned per note (deterministic, text-level). There is **no acoustic syllable-counting**:
+  lyrics are not labels, so audio-domain syllable verification is out of scope.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -161,9 +176,10 @@ pinned text (identical lyrics) without invoking the model again.
 
 **Acceptance Scenarios**:
 
-1. **Given** a theme string and the generated source enabled, **When** the run executes, **Then** each
-   score receives count-matched lyrics and the generated text is persisted as a pinned, hash-
-   referenced artifact in/alongside the manifest.
+1. **Given** a theme string and the generated source enabled, **When** the run executes, **Then** the
+   generated text is **segmented into singable syllables and aligned one-syllable-per-note** (count-
+   matched at the syllable level), and the generated text is persisted as a pinned, hash-referenced
+   artifact in/alongside the manifest.
 2. **Given** a published manifest from such a run, **When** the corpus is regenerated, **Then** the
    pinned lyric text is reused verbatim and no lyric model is re-invoked, and the regenerated samples
    meet 001's reproducibility tolerance for the lane that rendered them.
@@ -178,6 +194,20 @@ pinned text (identical lyrics) without invoking the model again.
 - **Syllable/note count mismatch**: When a lyric source yields fewer or more syllables than notes, the
   unmatched notes fall back to the neutral open vowel ("ah"); the mismatch is recorded in provenance.
   No note label is dropped, added, or shifted (consistent with 001's existing mismatch policy).
+- **Multi-syllable words / free generated text**: A lyric source that emits whole words or sentences
+  (the automatic sampler drawing dictionary words, or the generated model) MUST be segmented into
+  syllables before alignment, with exactly one syllable assigned per note in order. A residue of
+  syllables beyond the note count, or notes left over beyond the syllable count, is resolved by the
+  count-mismatch vowel fallback below — never by packing several syllables onto one note or splitting a
+  syllable across notes.
+- **Multi-syllable operator-supplied cell**: A supplied 4th-column cell holding a multi-syllable word
+  (e.g. "winter") is **taken as authored** — sung on its note as the operator wrote it — and recorded
+  in provenance and the stats report as a multi-syllable supplied cell. FR-019's one-syllable-per-note
+  rule does not re-segment, truncate, or reject supplied lyrics; supplied text is the operator's
+  responsibility.
+- **Un-syllabifiable token**: A token the syllabifier cannot divide into a valid singable syllable
+  (e.g. a symbol, a number, or out-of-inventory text) is flagged and the affected note falls back to
+  the open vowel, with the substitution logged — consistent with the out-of-inventory case below.
 - **Melisma (one syllable across multiple notes)**: v1 is one-syllable-per-note (`per_note`); a
   sustained single syllable across tied/legato notes (`sustain_ties`) is reserved and rejected by
   config validation, so this mode does not silently produce mis-counted lyrics. A supplied lyric with
@@ -268,10 +298,29 @@ pinned text (identical lyrics) without invoking the model again.
   onset/offset deltas between the two are within the tolerances above — so "no shift from adding vocal
   synthesis" is a gated, reproducible verdict rather than a claim.
 
+- **FR-019 (one syllable per note)**: Every lyric source that emits words, phrases, or free generated
+  text (the automatic sampler and the generated model source) MUST segment that text into well-formed
+  singable syllables and align exactly one syllable to each note, in order, so each sung note carries a
+  single complete syllable — never a sub-syllable phoneme fragment, never multiple syllables on one
+  note, and never (in v1) one syllable sustained across multiple notes (the reserved `sustain_ties`
+  mode remains rejected by config validation). Syllabification MUST be deterministic for the automatic
+  source (consistent with FR-004) and MUST be applied to the pinned generated text at render time so a
+  replay segments identically (consistent with FR-012). Notes with no syllable after alignment, and
+  syllables beyond the note count, are handled by the count-mismatch vowel fallback (FR-008); no note
+  label is dropped, added, or shifted. **Operator-supplied lyrics (FR-002) are out of scope for this
+  rule**: a supplied per-note cell is taken as authored and sung on its note as written; a supplied
+  cell that is not a single syllable MUST be flagged in provenance (FR-009) and the stats report
+  (FR-014) but MUST NOT be re-segmented, truncated, dropped, or rejected.
+
 ### Key Entities *(include if feature involves data)*
 
-- **Lyric**: An optional per-note syllable/text attached to a Note. Absent (the default) means the
-  note is sung as a neutral open vowel. Lyrics are never a corpus label.
+- **Lyric**: An optional per-note **syllable** attached to a Note. The articulated unit is always a
+  single syllable; word- or text-level lyric inputs are segmented into syllables and distributed one
+  per note before rendering (FR-019). Absent (the default) means the note is sung as a neutral open
+  vowel. Lyrics are never a corpus label.
+- **Syllable Segmentation**: The deterministic step that turns a lyric source's raw output (a syllable,
+  a word, or free generated text) into an ordered list of singable syllables, then aligns them
+  one-per-note. Its output is what each note actually sings; mismatches fall back to the open vowel.
 - **Lyric Source**: The origin of a sample's lyrics — one of vowel (default), supplied (carried with
   the score), automatic (seed-derived syllables), or generated (model + theme). Recorded in
   provenance.
@@ -311,6 +360,14 @@ pinned text (identical lyrics) without invoking the model again.
   tolerance; notes exceeding the relative bound are rejected, so zero timing shift attributable to
   lyrics reaches the accepted corpus.
 
+- **SC-010 (one syllable per note)**: For runs using the automatic or generated lyric source, 100% of
+  accepted sung notes carry exactly one well-formed syllable; zero accepted notes carry a sub-syllable
+  fragment, a multi-syllable cluster, or a syllable shared across notes. This is verified as a
+  **structural invariant on the segmentation step** — the harness asserts the segmenter emits exactly
+  one syllable token aligned per note (a deterministic, text-level check); there is no acoustic
+  syllable-counting on rendered audio. Inputs that cannot be segmented into one-syllable-per-note fall
+  back to the open vowel and are logged, never admitted as mis-segmented audio.
+
 ## Assumptions
 
 - The downstream consumer remains the 001 note/pitch transcription model; lyrics are never emitted as
@@ -322,6 +379,11 @@ pinned text (identical lyrics) without invoking the model again.
 - The melisma policy in v1 assigns one syllable per note (`per_note`); sustaining a single syllable
   across tied/legato notes (`sustain_ties`) is a reserved option that v1 rejects with a "not yet
   supported" validation error rather than silently accepting an unimplemented mode.
+- The sung unit is always a single syllable (FR-019). Lyric sources may internally work with words or
+  free text, but a deterministic syllable-segmentation step always reduces that to one syllable per
+  note before rendering; English syllable segmentation (dictionary-based for known words, a rule-based
+  fallback otherwise) is assumed sufficient for v1's phonetic-coverage goal, since syllable
+  *correctness* matters only insofar as the result is singable, not linguistically authoritative.
 - Only the expressive lane articulates lyrics; the deterministic and voice-conversion lanes are
   unaffected. Operators wanting consonant-bearing audio enable the expressive lane.
 - The operator holds the rights to any lyric-generation model and any operator-supplied lyric text; the

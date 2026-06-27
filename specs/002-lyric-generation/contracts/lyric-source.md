@@ -30,6 +30,14 @@ class LyricSource(Protocol):
    open-vowel path and produces byte-identical output to the pre-feature pipeline (SC-001).
 4. **Hashing**: `plan.text_hash` = sha256 over the canonical (note-ordered) syllable list; becomes the
    manifest `lyric_hash`.
+4a. **One syllable per note** (`automatic`, `generated`, FR-019): every non-`None` entry in
+   `plan.syllables` is exactly one singable syllable, so `plan.multisyllable_notes == []`. `automatic`
+   satisfies this by construction; `generated` runs model text through `syllabify.segment` before 1:1
+   alignment. Deterministic, so `generated` replay over pinned text re-segments identically. SC-010 is a
+   structural assertion on the plan (no acoustic syllable-counting).
+4b. **Supplied taken as authored** (`supplied`, FR-019): cells are never re-segmented, truncated, or
+   rejected; `syllabify.syllable_count` only appends a non-single-syllable cell's index to
+   `plan.multisyllable_notes`, surfaced as `lyric_multisyllable_supplied` in provenance + stats.
 5. **License gate** (`generated`): a `LyricModel` with `license_ok` false/missing ⇒ `resolve` refuses
    (raises a refusal surfaced as a `license_refused` note), produces no plan (FR-010, SC-006).
 6. **Caching** (`generated`): the model runs once per score set; output is pinned to
@@ -42,7 +50,7 @@ class LyricSource(Protocol):
 # render/svs.py — when a LyricPlan with non-empty syllables is present:
 #   1. g2p(plan, score) -> list[Phoneme run]   (lazy phonemizer/espeak-ng import)
 #   2. articulate phonemes, vowel-on-the-beat (Decision L3)
-#   3. label safety unchanged (FR-007): force_score_f0 (exact) | rederive_labels (gated, SC-010)
+#   3. label safety unchanged (FR-007): force_score_f0 (exact) | rederive_labels (gated, SC-002)
 # Deterministic / voice-conversion lanes ignore the plan and set lyric_articulated=False (FR-006).
 ```
 

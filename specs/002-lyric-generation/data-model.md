@@ -50,12 +50,20 @@ The resolved per-note lyric assignment a source produces and the SVS lane consum
 | `syllables` | list[str \| None] | one entry per note; `None` ⇒ open-vowel fallback for that note (FR-008) |
 | `text_hash` | str | sha256 of the canonical syllable list — the manifest `lyric_hash` |
 | `mismatch` | bool | true when the source's syllable count ≠ note count (resolved by vowel fallback, logged) |
+| `multisyllable_notes` | list[int] | **new.** Note indices whose assigned text is not a single syllable. For `automatic`/`generated` this MUST be empty (FR-019 holds by construction/segmentation); for `supplied` it lists operator cells taken as-authored and flagged (never re-segmented). |
 | `model` | LyricModel \| None | set only for `generated` |
 
 **Rules:**
 - `len(syllables) == len(score.notes)` always; a source that yields too few/many is reconciled to the
   note count by truncation/`None`-padding (vowel fallback), with `mismatch=True` (FR-008, SC-005). No
   note is dropped, added, or shifted.
+- **One syllable per note (FR-019)**: for `automatic` and `generated`, every non-`None` entry in
+  `syllables` is exactly one singable syllable — the CV sampler emits one per note by construction, and
+  `generated` free text passes through `syllabify.segment` before 1:1 alignment — so
+  `multisyllable_notes` is empty. The structural SC-010 check asserts this directly on the plan.
+- **Supplied cells are taken as authored**: for `supplied`, a cell is never re-segmented, truncated, or
+  rejected; `syllabify.syllable_count` only *flags* a non-single-syllable cell by appending its index
+  to `multisyllable_notes` (surfaced in provenance + stats).
 - A syllable on a note shorter than the learned `min_note_ms` does not override 001's short-note
   flag/reject policy.
 - `text_hash` is deterministic over the canonical (note-ordered) syllable list.
@@ -88,6 +96,22 @@ lane. Not persisted.
 | `lead_consonants` | list[str] | placed in a short pre-onset window |
 | `tail_consonants` | list[str] | placed in a short pre-offset window |
 
+## Syllable segmentation (new — `voders.lyrics.syllabify`, FR-019)
+
+A pure, deterministic helper (no model, no I/O) the sources use to honor one-syllable-per-note:
+
+| Function | Signature | Used by |
+|----------|-----------|---------|
+| `segment` | `segment(text: str) -> list[str]` | `generated` — splits model words/lines into ordered singable syllables before 1:1 note alignment |
+| `syllable_count` | `syllable_count(text: str) -> int` | `supplied` — flags a cell whose count ≠ 1 into `LyricPlan.multisyllable_notes` (no transformation) |
+
+**Rules:**
+- Deterministic: a pure function of `text` (dictionary lookup for known words + a rule-based fallback
+  for the rest), so `generated` replay over the pinned text re-segments identically (FR-012, FR-019).
+- The `automatic` sampler does **not** call `segment` — it already emits one CV syllable per note.
+- English-rule sufficiency is assumed for v1 (syllables need only be singable, not linguistically
+  authoritative — spec Assumptions).
+
 ## LyricsConfig (new — RunConfig addition, FR-013)
 
 Added to the existing `RunConfig` (`src/voders/config/models.py`). Default keeps runs unchanged.
@@ -97,6 +121,7 @@ Added to the existing `RunConfig` (`src/voders/config/models.py`). Default keeps
 | `source` | LyricSource | `vowel` | per-run lyric source selector (FR-013) |
 | `inventory` | str | `"en_cv"` | name of the checked-in syllable/phoneme inventory for `automatic` |
 | `g2p_backend` | str | `"espeak"` | G2P backend for articulation |
+| `syllabifier` | str | `"en_rule"` | segmenter used by `generated` (split words→syllables) and to flag `supplied` multi-syllable cells (FR-019); deterministic, CPU |
 | `melisma` | str | `"per_note"` | v1 accepts only `per_note` (one syllable/note); `sustain_ties` (hold across tied notes) is **reserved** and raises a "not yet supported" validation error until implemented |
 | `theme` | str \| None | `None` | **only** for `generated`; operator-supplied; never read from annotations (FR-011) |
 | `model` | LyricModel \| None | `None` | only for `generated` |
@@ -119,6 +144,7 @@ explicitly. All default such that existing lyric-free runs serialize compatibly.
 | `lyric_model` | str \| None | `None` | model id for `generated` (FR-010) |
 | `lyric_model_license` | str \| None | `None` | license tag for `generated` (FR-010) |
 | `lyric_articulated` | bool | `False` | true only when the lane actually sang phonemes (the SVS lane); false for the deterministic/VC lanes even if a lyric was present (FR-006 edge case) |
+| `lyric_multisyllable_supplied` | int | `0` | count of operator-`supplied` cells on this sample that were not a single syllable and were sung as authored (FR-019 flag; 0 for vowel/automatic/generated) |
 
 The **no-shift** guarantee (FR-015/FR-016, SC-008/SC-009) needs no new stored field: the per-note
 pitch and onset/offset deltas of a lyric render versus the lyric-free baseline are computed by the
@@ -137,6 +163,9 @@ The run stats report gains:
 - **lyric-source breakdown** — sample counts per `lyric_source`.
 - **phonetic-coverage summary** — count of distinct sung phonemes across the corpus vs. the
   vowel-only baseline (SC-003), produced by `voders.lyrics.coverage`.
+- **supplied multi-syllable count** — total operator-supplied cells sung as authored that were not a
+  single syllable (sum of `lyric_multisyllable_supplied`), so the operator sees how many supplied cells
+  fell outside the one-syllable-per-note convention (FR-019).
 
 ## Lifecycle
 

@@ -88,6 +88,7 @@ failure:
 | generated run replays from the pinned artifact, zero model re-invocations | SC-007 |
 | no pitch shift vs lyric-free baseline (same seed): within ±25 cents | SC-008 |
 | no timing shift vs lyric-free baseline (same seed): onset/offset within 10 ms | SC-009 |
+| one syllable per note (automatic/generated): exactly one syllable token per note in the plan (structural, not acoustic); supplied multi-syllable cells sung as authored and flagged | SC-010 |
 
 The last two are a **differential** check: the harness renders each fixture score twice for the same
 seed — once with lyrics, once lyric-free — and asserts adding vocal synthesis moved neither the pitch
@@ -101,7 +102,9 @@ uv run voders eval --manifest /tmp/lyrics/manifest.jsonl --suite lyrics --differ
 
 - `Note` gains an optional `lyric`; `.tsv` gains an optional 4th column (lyric-free output stays
   3-column).
-- New `voders.lyrics` package (sources, sampler, G2P, cache, coverage) — CPU only.
+- New `voders.lyrics` package (sources, sampler, syllabify, G2P, cache, coverage) — CPU only. The
+  `automatic`/`generated` sources emit exactly one syllable per note (FR-019); supplied multi-syllable
+  cells are sung as authored and flagged.
 - The SVS lane articulates phonemes when a lyric plan is present; **the deterministic and
   voice-conversion lanes are untouched**.
 - The manifest gains a lyric provenance axis; `RunConfig` gains an optional `lyrics` block.
