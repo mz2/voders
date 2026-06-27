@@ -74,11 +74,18 @@ augment FETCH="1" FREESOUND_COUNT="5" pool="evals/fixtures/donor_pool.yaml" mani
     uv run voders eval --manifest {{manifest}}
     uv run voders stats --manifest {{manifest}}
 
-# Stub for model training on the augmented corpus. Wire in the real trainer where marked.
-train manifest="out/donor_pool/manifest.jsonl": setup
-    @test -f {{manifest}} || { echo "no manifest at {{manifest}} — run 'just augment' first" >&2; exit 1; }
-    @echo "[train stub] augmented corpus: $(wc -l < {{manifest}}) clip(s) in {{manifest}}"
-    @echo "[train stub] TODO: invoke the real training entrypoint here (e.g. uv run voders train ...)."
+# Create the isolated Python 3.11 environment used by the MML26 trainer.
+setup-training:
+    uv venv --python 3.11 training/.venv
+    uv pip install --python training/.venv/bin/python -r training/basic_pitch/requirements.txt
+
+# Train Basic Pitch on a native voders corpus. The evaluation directory must use
+# the flat Klangio WAV/TSV layout; the Action checks out the pinned data there.
+train corpus="out/donor_pool/corpus" eval_data="training/challenge-data/klangiodataset" output="training-output":
+    @test -d {{corpus}} || { echo "no corpus at {{corpus}} — run 'just augment' first" >&2; exit 1; }
+    @test -d {{eval_data}} || { echo "no Klangio evaluation data at {{eval_data}}" >&2; exit 1; }
+    @test -x training/.venv/bin/python || { echo "training environment missing — run 'just setup-training'" >&2; exit 1; }
+    cd training/basic_pitch && ../.venv/bin/python -m src.train --train-path ../../{{corpus}} --val-path ../../{{eval_data}} --test-path ../../{{eval_data}} --checkpoint-dir ../../{{output}} --output-dir ../../{{output}}
 
 # Run the full test suite.
 test: setup

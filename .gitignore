@@ -220,6 +220,8 @@ __marimo__/
 # voders: generated corpora are never committed (constitution: Binary Assets & Large Files).
 # Only fixtures (LFS), the resolved config, manifest, and stats are version-controlled.
 /out/
+/training-output/
+/training/challenge-data/
 
 # voders: downloaded model weights are never committed (large, consent-gated assets).
 # Exception: the small CC0/permissive Freesound donor vowels are versioned via LFS so the

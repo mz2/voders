@@ -73,6 +73,7 @@ where = ["src"]
 line-length = 100
 src = ["src", "tests", "evals"]
 target-version = "py313"
+extend-exclude = ["training/basic_pitch"]
 
 [tool.ruff.lint]
 # Zero-warning lint (Constitution Principle II).

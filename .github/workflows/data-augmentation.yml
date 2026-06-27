@@ -1,81 +1,254 @@
 name: data-augmentation
 
-# Runs the whole data-augmentation pipeline on the donors checked into the repo (no network
-# fetches): build the unified donor pool -> render the deterministic lane -> fan each accepted
-# render through the augmentation profiles -> audit -> eval -> stats, then a stub training step.
-# Triggered two ways:
-#   * manually from the Actions tab (workflow_dispatch), and
-#   * automatically when a GitHub Release is published (i.e. a release tag is created).
 on:
   workflow_dispatch:
     inputs:
       run_training:
-        description: "Run the (stub) training step after augmentation"
+        description: Run Basic Pitch training after augmentation
         type: boolean
-        default: false
+        default: true
+  issues:
+    types: [labeled]
   release:
     types: [published]
 
 permissions:
   contents: read
 
+concurrency:
+  group: train-${{ github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  WANDB_PROJECT: ${{ vars.WANDB_PROJECT || 'basic_pitch+_MML-hackaton2026' }}
+  WANDB_ENTITY: ${{ vars.WANDB_ENTITY }}
+  HF_MODEL_REPO: ${{ vars.HF_MODEL_REPO }}
+  TRAIN_MAX_EPOCHS: "100"
+  TRAIN_BATCH_SIZE: "8"
+  TRAIN_NUM_WORKERS: "8"
+  TRAIN_PRECISION: "16"
+
 jobs:
   augment:
     name: Build augmented corpus
-    # Runs on the repo's self-hosted runner.
+    if: >-
+      github.event_name != 'issues' ||
+      github.event.label.name == 'train'
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          lfs: true   # pull the committed Freesound donor WAVs (Git LFS)
+          lfs: true
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Install just
-        uses: extractions/setup-just@v2
+        uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
 
       - name: Sync CPU environment
         run: uv sync --extra cpu
 
-      - name: Run data-augmentation pipeline (checked-in donors, no fetch)
+      - name: Run data-augmentation pipeline
         run: just augment FETCH=0
 
       - name: Upload augmented corpus
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: voders-corpus
-          path: |
-            out/donor_pool/**
-          if-no-files-found: warn
+          path: out/donor_pool/**
+          if-no-files-found: error
+          retention-days: 3
 
   train:
-    name: Train (stub)
+    name: Train Basic Pitch
     needs: augment
-    # Always train on a release (tag); on a manual run only when the box is ticked.
-    if: ${{ github.event_name == 'release' || inputs.run_training == true }}
+    if: >-
+      github.event_name == 'release' ||
+      (github.event_name == 'issues' && github.event.label.name == 'train') ||
+      (github.event_name == 'workflow_dispatch' && inputs.run_training)
     runs-on: self-hosted
+    permissions:
+      contents: read
+      issues: write
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          enable-cache: true
+          persist-credentials: false
 
-      - name: Install just
-        uses: extractions/setup-just@v2
+      - name: Check out pinned Klangio evaluation data
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: Klangio/MML26-singing-synthesis
+          ref: 6d95b7b108f7daabe07e99f12a3ab9d2b9dc2535
+          sparse-checkout: klangiodataset
+          path: training/challenge-data
+          persist-credentials: false
 
-      - name: Sync CPU environment
-        run: uv sync --extra cpu
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate required secrets
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          test -n "$WANDB_API_KEY" || { echo "WANDB_API_KEY secret is missing"; exit 1; }
+          test -n "$HF_TOKEN" || { echo "HF_TOKEN secret is missing"; exit 1; }
+
+      - name: Install training environment
+        run: |
+          python -m venv --clear training/.venv
+          training/.venv/bin/python -m pip install --upgrade pip
+          training/.venv/bin/python -m pip install -r training/basic_pitch/requirements.txt
 
       - name: Download augmented corpus
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: voders-corpus
           path: out/donor_pool
 
-      - name: Train on the augmented corpus
-        run: just train
+      - name: Verify GPU and datasets
+        run: |
+          training/.venv/bin/python - <<'PY'
+          from pathlib import Path
+          import torch
+
+          corpus = Path("out/donor_pool/corpus")
+          evaluation = Path("training/challenge-data/klangiodataset")
+          pairs = [
+              wav for wav in corpus.rglob("*.wav")
+              if wav.with_suffix(".tsv").is_file()
+          ]
+          eval_pairs = [
+              wav for wav in evaluation.glob("*.wav")
+              if wav.with_suffix(".tsv").is_file()
+          ]
+          assert pairs, f"No paired training samples under {corpus}"
+          assert eval_pairs, f"No paired evaluation samples under {evaluation}"
+          assert torch.cuda.is_available(), "A CUDA GPU is required for this workflow"
+          print(f"CUDA: {torch.cuda.get_device_name(0)}")
+          print(f"Training pairs: {len(pairs)}; evaluation pairs: {len(eval_pairs)}")
+          PY
+
+      - name: Create W&B run
+        id: wandb
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || 0 }}
+        run: |
+          args=()
+          if [ -n "$WANDB_ENTITY" ]; then
+            args+=(--entity "$WANDB_ENTITY")
+          fi
+          command=(
+            training/.venv/bin/python training/prepare_wandb_run.py
+            --project "$WANDB_PROJECT"
+            --name "voders-${GITHUB_RUN_ID}"
+            --tag voders
+            --tag github-actions
+            --issue "$ISSUE_NUMBER"
+          )
+          command+=("${args[@]}")
+          "${command[@]}"
+
+      - name: Comment W&B URL on issue
+        if: github.event_name == 'issues'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          WANDB_URL: ${{ steps.wandb.outputs.run_url }}
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `Training started: [Weights & Biases](${process.env.WANDB_URL}) · [GitHub Actions](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`
+            })
+
+      - name: Train on augmented corpus
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+          WANDB_RUN_ID: ${{ steps.wandb.outputs.run_id }}
+          WANDB_RESUME: allow
+        run: |
+          cd training/basic_pitch
+          command=(
+            ../.venv/bin/python -m src.train
+            --train-path ../../out/donor_pool/corpus
+            --val-path ../challenge-data/klangiodataset
+            --test-path ../challenge-data/klangiodataset
+            --checkpoint-dir ../../training-output
+            --output-dir ../../training-output
+            --experiment-name voders
+            --logger wandb
+            --wandb-project "$WANDB_PROJECT"
+            --wandb-name "voders-${GITHUB_RUN_ID}"
+            --wandb-tags voders github-actions
+            --accelerator gpu
+            --devices 1
+            --precision "$TRAIN_PRECISION"
+            --batch-size "$TRAIN_BATCH_SIZE"
+            --num-workers "$TRAIN_NUM_WORKERS"
+            --max-epochs "$TRAIN_MAX_EPOCHS"
+          )
+          if [ -n "$WANDB_ENTITY" ]; then
+            command+=(--wandb-entity "$WANDB_ENTITY")
+          fi
+          "${command[@]}"
+
+      - name: Locate best checkpoint
+        id: checkpoint
+        run: |
+          checkpoint="$(find training-output -type f -name 'best-*.ckpt' -print -quit)"
+          test -n "$checkpoint" || { echo "No best checkpoint was produced"; exit 1; }
+          echo "path=$checkpoint" >> "$GITHUB_OUTPUT"
+
+      - name: Upload best checkpoint artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: basic-pitch-best-${{ github.run_id }}
+          path: ${{ steps.checkpoint.outputs.path }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish best checkpoint to Hugging Face
+        id: hf
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          WANDB_RUN_ID: ${{ steps.wandb.outputs.run_id }}
+          CHECKPOINT_PATH: ${{ steps.checkpoint.outputs.path }}
+        run: |
+          training/.venv/bin/python training/publish_checkpoint.py "$CHECKPOINT_PATH"
+
+      - name: Comment checkpoint URL on issue
+        if: github.event_name == 'issues'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          WANDB_URL: ${{ steps.wandb.outputs.run_url }}
+          CHECKPOINT_URL: ${{ steps.hf.outputs.checkpoint_url }}
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `Training complete: [W&B run](${process.env.WANDB_URL}) · [best checkpoint on Hugging Face](${process.env.CHECKPOINT_URL})`
+            })
+
+      - name: Report failure on issue
+        if: failure() && github.event_name == 'issues'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `Training failed. See [GitHub Actions](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for logs.`
+            })

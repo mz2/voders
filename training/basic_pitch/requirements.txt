@@ -1,0 +1,15 @@
+torch==2.8.0
+torchaudio==2.8.0
+numpy==1.26.4
+scipy==1.11.4
+librosa==0.11.0
+pandas==2.1.4
+tqdm==4.68.1
+matplotlib==3.8.2
+soundfile==0.14.0
+mir_eval==0.8.2
+pytorch-lightning==2.6.5
+tensorboard==2.20.0
+wandb==0.28.0
+huggingface_hub==1.21.0
+nnAudio==0.3.4
