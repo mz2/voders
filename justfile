@@ -109,12 +109,26 @@ pack-corpus RUN_ID="donor_pool": setup
 unpack-corpus RUN_ID="donor_pool": setup
     uv run --extra cpu python evals/corpus_archive.py unpack --run-id {{RUN_ID}}
 
+# Render the Nth fifth (N=0..4) of the Klangio melodies with the persistent nnsvs worker (one
+# resident model per shard — no reload, no GPU OOM, no formant fallback), pack it to
+# datasets/klangio_fifth_N, and wire it straight into the trainer's input dir. Run once per fifth,
+# whenever you like; each completed fifth is added to the training set. SHARDS = parallel processes.
+klangio-fifth N SHARDS="6": setup
+    git submodule update --init external/MML26-singing-synthesis
+    @test -d evals/fixtures/scores_klangio || uv run --extra cpu python evals/ingest_klangio.py
+    uv sync --extra cpu --extra lyrics --extra gpu
+    uv run --extra cpu --extra lyrics --extra gpu python evals/render_klangio.py --of 5 --part {{N}} --shards {{SHARDS}}
+    uv run --extra cpu python evals/corpus_archive.py pack --run-id klangio_fifth_{{N}}
+    uv run --extra cpu python evals/corpus_archive.py stage --run-ids klangio_fifth_{{N}} --out syntheticdataset_soulx
+    @echo "fifth {{N}} -> datasets/klangio_fifth_{{N}}, staged into syntheticdataset_soulx (commit+push it to share)"
+
 # Train the SoulX Basic Pitch baseline and stream metrics and media to Weights & Biases.
 # Stages the committed datasets into the trainer's flat input dir, REBALANCED so the neural-SVS audio
 # with lyrics is the majority: only a small `donor_pool:N` slice of the open-vowel deterministic data
-# is kept as a cheap label/timbre anchor, alongside the full scat (lyrics_pool) and real-word
-# (lyrics_pool_words) neural sets. Use `donor_pool` (no cap) to include all of it.
-train RUN_IDS="donor_pool:40 lyrics_pool lyrics_pool_words":
+# is kept as a cheap label/timbre anchor, alongside the full scat (lyrics_pool), real-word
+# (lyrics_pool_words), and any rendered Klangio fifths. Absent run ids are skipped, so the fifths
+# join automatically as each `just klangio-fifth N` completes. Use `donor_pool` (no cap) for all of it.
+train RUN_IDS="donor_pool:40 lyrics_pool lyrics_pool_words klangio_fifth_0 klangio_fifth_1 klangio_fifth_2 klangio_fifth_3 klangio_fifth_4":
     uv sync --extra cpu --extra gpu --extra training
     uv run --extra cpu python evals/corpus_archive.py stage --run-ids {{RUN_IDS}} --out syntheticdataset_soulx
     bash training/train_soulx.sh

@@ -19,8 +19,93 @@ Backends (``options["backend"]``):
 
 from __future__ import annotations
 
+import numpy as np
+
+from voders.constants import SAMPLE_RATE
 from voders.render.base import RenderRequest, RenderResult
+from voders.render.deterministic import midi_to_hz
+from voders.scores.models import Score
 from voders.voices.models import Voice, VoiceKind
+
+_MAX_LATENCY_S = 0.3  # search window for the converter's processing latency
+
+
+def _pitch_correct(audio: np.ndarray, score: Score, strength: float) -> np.ndarray:
+    """Subtle per-note pitch centring: shift each note's f0 contour so its *median* sits on the
+    score pitch, keeping the contour shape (vibrato, scoops) intact.
+
+    ``strength`` dials it: 0 = off, 1 = each note fully centred on its pitch. Because it *shifts*
+    the contour rather than flattening it to a constant, it corrects audible drift without the hard
+    autotune ("Cher") sound. Uses WORLD analysis/resynthesis but keeps the converted timbre (its
+    spectral envelope and aperiodicity are untouched — only f0 moves).
+    """
+    if strength <= 0:
+        return audio
+    import pyworld
+
+    x = np.ascontiguousarray(audio, dtype=np.float64)
+    if x.size < SAMPLE_RATE // 50:
+        return audio
+    f0, t = pyworld.harvest(x, SAMPLE_RATE)
+    sp = pyworld.cheaptrick(x, f0, t, SAMPLE_RATE)
+    ap = pyworld.d4c(x, f0, t, SAMPLE_RATE)
+    f0c = f0.copy()
+    for note in score.notes:
+        m = (t >= note.onset_s) & (t < note.offset_s) & (f0 > 0)
+        if int(m.sum()) < 3:
+            continue
+        med = float(np.median(f0[m]))
+        if med <= 0:
+            continue
+        f0c[m] = f0[m] * (midi_to_hz(note.pitch_midi) / med) ** float(strength)
+    y = pyworld.synthesize(f0c, sp, ap, SAMPLE_RATE).astype(np.float32)
+    peak = float(np.max(np.abs(y))) if y.size else 0.0
+    if peak > 1.0:
+        y = (y / peak * 0.98).astype(np.float32)
+    return y
+
+
+def _align_to_source(converted: np.ndarray, source: np.ndarray) -> tuple[np.ndarray, float]:
+    """Shift ``converted`` to compensate the converter's latency, aligning it to ``source``.
+
+    ``source`` is the exact-grid WORLD render (its onsets ARE the labels). A generative converter
+    adds a near-constant latency, so we estimate the global lag by cross-correlating the two energy
+    envelopes and shift ``converted`` back onto the grid, then match length and de-clip. Returns the
+    re-aligned audio and the compensated latency in milliseconds.
+    """
+    c = np.asarray(converted, dtype=np.float32)
+    s = np.asarray(source, dtype=np.float32)
+    n = min(c.size, s.size)
+    if n < SAMPLE_RATE // 10:
+        return c, 0.0
+    ds = max(1, SAMPLE_RATE // 2000)  # downsample envelopes to ~2 kHz for a cheap correlation
+    win = max(1, SAMPLE_RATE // 200)  # ~5 ms smoothing
+    kernel = np.ones(win, dtype=np.float64) / win
+
+    def _env(x: np.ndarray) -> np.ndarray:
+        e = np.convolve(np.abs(x[:n]).astype(np.float64), kernel, mode="same")[::ds]
+        return e - e.mean()
+
+    ec, es = _env(c), _env(s)
+    corr = np.correlate(ec, es, mode="full")
+    mid = es.size - 1
+    span = int(_MAX_LATENCY_S * SAMPLE_RATE) // ds
+    lo, hi = max(0, mid - span), min(corr.size - 1, mid + span)
+    lag = (int(np.argmax(corr[lo : hi + 1])) + lo - mid) * ds  # >0: converted lags the source
+
+    if lag > 0:
+        c = c[lag:]
+    elif lag < 0:
+        c = np.concatenate([np.zeros(-lag, dtype=np.float32), c])
+    if c.size < s.size:
+        c = np.concatenate([c, np.zeros(s.size - c.size, dtype=np.float32)])
+    else:
+        c = c[: s.size]
+    peak = float(np.max(np.abs(c))) if c.size else 0.0
+    if peak > 1.0:
+        c = (c / peak * 0.98).astype(np.float32)
+    return c, round(lag * 1000.0 / SAMPLE_RATE, 1)
+
 
 _CPU_BACKENDS = frozenset({"world"})
 # Out-of-process backends → (backend project dir under backends/, worker module). Each runs the
@@ -100,7 +185,24 @@ class VoiceConversionLane:
                 device=str(req.options.get("device", "auto")),
                 params=params,
             )
-            return RenderResult(audio=converted, label_score=req.score, notes={"backend": backend})
+            # Generative converters (seedvc) introduce a near-constant processing latency, so onsets
+            # drift off the score grid even though f0 is preserved. Re-align the converted audio to
+            # the exact-grid WORLD source by global cross-correlation — keeps the human timbre while
+            # snapping onsets back onto the labels (FR-004).
+            converted, lag_ms = _align_to_source(converted, base)
+            # Optional subtle pitch correction: pull each note's median f0 onto the score pitch
+            # while keeping the contour, so generative drift is tuned out without flattening.
+            strength = float(
+                req.options.get("pitch_correct", self.options.get("pitch_correct", 0.0))
+            )
+            corrected = _pitch_correct(converted, req.score, strength)
+            if corrected.size:
+                converted = corrected
+            return RenderResult(
+                audio=converted,
+                label_score=req.score,
+                notes={"backend": backend, "vc_latency_ms": lag_ms, "pitch_correct": strength},
+            )
 
         if backend in _REPO_BACKENDS:
             raise RuntimeError(

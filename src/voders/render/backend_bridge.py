@@ -9,10 +9,12 @@ two incompatible dependency chains in separate processes (the reason the project
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +22,68 @@ import numpy as np
 from voders.audio import read_wav, write_wav
 from voders.constants import SAMPLE_RATE
 from voders.scores.models import Score
+
+# --- Persistent (model-resident) backend workers -------------------------------------------------
+# By default each render spawns a fresh worker process (model reloads every sample), which dominates
+# batch-render wall time and — for GPU backends run many shards wide — multiplies GPU memory until
+# it OOMs. With VODERS_SVS_PERSISTENT=1 the core keeps ONE long-lived worker per (backend, module)
+# in `--serve` mode: the model loads once and is reused for every request, so a big render pays the
+# load cost once and holds a single model in GPU memory.
+_PERSISTENT: dict[tuple[str, str], _PersistentBackend] = {}
+_PERSISTENT_LOCK = threading.Lock()
+
+
+class _PersistentBackend:
+    """A long-lived ``--serve`` worker: one resident model, streamed JSON requests/responses."""
+
+    def __init__(self, name: str, module: str) -> None:
+        proj = backends_root() / name
+        if not (proj / "pyproject.toml").exists():
+            raise RuntimeError(f"backend project {name!r} not found at {proj}")
+        self.name = name
+        self.proc = subprocess.Popen(
+            ["uv", "run", "--project", str(proj), "python", "-m", module, "--serve"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+
+    def request(self, req: dict) -> dict:
+        if self.proc.poll() is not None or not self.proc.stdin or not self.proc.stdout:
+            raise RuntimeError(f"persistent backend {self.name!r} is not running")
+        self.proc.stdin.write(json.dumps(req) + "\n")
+        self.proc.stdin.flush()
+        line = self.proc.stdout.readline()
+        if not line:
+            raise RuntimeError(f"persistent backend {self.name!r} closed its output")
+        return json.loads(line)
+
+    def close(self) -> None:
+        try:
+            if self.proc.poll() is None:
+                if self.proc.stdin:
+                    self.proc.stdin.close()
+                self.proc.terminate()
+                self.proc.wait(timeout=10)
+        except Exception:  # noqa: BLE001 — best-effort teardown
+            pass
+
+
+def _persistent_backend(name: str, module: str) -> _PersistentBackend:
+    with _PERSISTENT_LOCK:
+        key = (name, module)
+        backend = _PERSISTENT.get(key)
+        if backend is None or backend.proc.poll() is not None:
+            backend = _PersistentBackend(name, module)
+            _PERSISTENT[key] = backend
+            atexit.register(backend.close)
+        return backend
+
+
+def _persistent_enabled() -> bool:
+    return os.environ.get("VODERS_SVS_PERSISTENT") == "1"
 
 
 def backends_root() -> Path:
@@ -79,19 +143,25 @@ def render_via_backend(
             request["lyrics"] = list(lyrics)
         if phonemes:
             request["phonemes"] = phonemes
-        req_path.write_text(json.dumps(request), encoding="utf-8")
 
-        proc = subprocess.run(
-            ["uv", "run", "--project", str(proj), "python", "-m", module, str(req_path)],
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"backend {name!r} failed (exit {proc.returncode}): {proc.stderr.strip()[-500:]}"
+        if _persistent_enabled():
+            # Reuse one model-resident worker (no per-sample reload, single GPU model). The worker
+            # writes out_wav; we read it back here exactly as in the one-shot path.
+            resp = _persistent_backend(name, module).request(request)
+            if not resp.get("ok"):
+                raise RuntimeError(f"backend {name!r}: {resp.get('error', 'render failed')}")
+        else:
+            req_path.write_text(json.dumps(request), encoding="utf-8")
+            proc = subprocess.run(
+                ["uv", "run", "--project", str(proj), "python", "-m", module, str(req_path)],
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+                check=False,
             )
+            if proc.returncode != 0:
+                tail = proc.stderr.strip()[-500:]
+                raise RuntimeError(f"backend {name!r} failed (exit {proc.returncode}): {tail}")
         if not out_wav.exists():
             raise RuntimeError(f"backend {name!r} produced no audio at {out_wav}")
         audio, _ = read_wav(out_wav)

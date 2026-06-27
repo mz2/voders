@@ -204,12 +204,13 @@ def render(
     return out.astype(np.float32)
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = sys.argv[1:] if argv is None else argv
-    if not args:
-        print(json.dumps({"ok": False, "error": "missing request path"}))
-        return 2
-    req = json.loads(Path(args[0]).read_text(encoding="utf-8"))
+def _handle(req: dict) -> dict:
+    """Render one request to its ``out_wav`` and return the JSON response dict.
+
+    Shared by the one-shot CLI and the persistent ``--serve`` loop. Because the NNSVS engine is
+    cached per process, calling this repeatedly in one ``--serve`` process loads the model once and
+    reuses it — eliminating the per-sample reload that dominates batch renders.
+    """
     sr = int(req.get("sr", 22050))
     phonemes = req.get("phonemes")
     lyrics = req.get("lyrics")
@@ -221,45 +222,73 @@ def main(argv: list[str] | None = None) -> int:
     # "nnsvs:donor:<wav>" (character from a freesound/VocalSet donor), a real NNSVS model id
     # ("<a>/<b>"), "yoko"/""; a plain donor ".wav" stays on the formant path (back-compat).
     model_ref = str(req.get("model_ref", ""))
-    engine = "formant"
-    audio = None
-    if _wants_nnsvs(model_ref) and lyrics:
-        try:
-            from voders_svs_backend.nnsvs_engine import (
-                DEFAULT_MODEL,
-                character_factor,
-                donor_formant_factor,
-                render_nnsvs,
-            )
+    if _wants_nnsvs(model_ref):
+        # nnsvs was explicitly requested: render with the real singing model or FAIL — never degrade
+        # to the formant synth (its robotic timbre is exactly what we don't want in the corpus). A
+        # failed sample is reported as an error so the orchestrator rejects it (no audio written).
+        if not lyrics:
+            return {"ok": False, "error": "nnsvs requires per-note lyrics/syllables"}
+        from voders_svs_backend.nnsvs_engine import (
+            DEFAULT_MODEL,
+            character_factor,
+            donor_formant_factor,
+            render_nnsvs,
+        )
 
-            base, factor = DEFAULT_MODEL, 1.0
-            if model_ref.startswith("nnsvs:donor:"):
-                factor = donor_formant_factor(model_ref[len("nnsvs:donor:") :])
-            elif model_ref.startswith("nnsvs:"):
-                factor = character_factor(model_ref[len("nnsvs:") :])
-            elif "/" in model_ref and not model_ref.endswith(".wav"):
-                base = model_ref  # a real NNSVS voicebank id
-            audio = render_nnsvs(notes, lyrics, sr, model_ref=base, formant_factor=factor)
-            engine = "nnsvs"
-        except Exception as exc:  # robust: degrade to the formant articulator, never crash the run
-            print(f"nnsvs render failed ({exc}); falling back to formant", file=sys.stderr)
-    if audio is None:
+        base, factor = DEFAULT_MODEL, 1.0
+        if model_ref.startswith("nnsvs:donor:"):
+            factor = donor_formant_factor(model_ref[len("nnsvs:donor:") :])
+        elif model_ref.startswith("nnsvs:"):
+            factor = character_factor(model_ref[len("nnsvs:") :])
+        elif "/" in model_ref and not model_ref.endswith(".wav"):
+            base = model_ref  # a real NNSVS voicebank id
+        audio = render_nnsvs(notes, lyrics, sr, model_ref=base, formant_factor=factor)
+        engine = "nnsvs"
+    else:
+        # Formant synth only when nnsvs was NOT requested (a config that explicitly chose it).
         audio = render(notes, sr, seed, phonemes=phonemes)
+        engine = "formant"
 
     out_wav = req["out_wav"]
     Path(out_wav).parent.mkdir(parents=True, exist_ok=True)
     sf.write(out_wav, audio, sr, subtype="FLOAT")
-    print(
-        json.dumps(
-            {
-                "ok": True,
-                "n_samples": int(audio.size),
-                "backend": engine,
-                "toolkit_available": _toolkit_available(),
-                "articulated": bool(phonemes) or engine == "nnsvs",
-            }
-        )
-    )
+    return {
+        "ok": True,
+        "n_samples": int(audio.size),
+        "backend": engine,
+        "toolkit_available": _toolkit_available(),
+        "articulated": bool(phonemes) or engine == "nnsvs",
+    }
+
+
+def _serve() -> int:
+    """Persistent mode: one JSON request per stdin line, one JSON response per stdout line.
+
+    The model loads on the first request and is reused for the rest (the engine is process-cached),
+    so a long batch render pays the model-load cost once instead of per sample. The core's
+    backend_bridge spawns one of these and streams requests to it.
+    """
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            resp = _handle(json.loads(line))
+        except Exception as exc:  # noqa: BLE001 — report per-request, keep the worker alive
+            resp = {"ok": False, "error": str(exc)}
+        sys.stdout.write(json.dumps(resp) + "\n")
+        sys.stdout.flush()
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if args and args[0] == "--serve":
+        return _serve()
+    if not args:
+        print(json.dumps({"ok": False, "error": "missing request path"}))
+        return 2
+    print(json.dumps(_handle(json.loads(Path(args[0]).read_text(encoding="utf-8")))))
     return 0
 
 

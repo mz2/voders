@@ -244,3 +244,9 @@ syntheticdataset_soulx/
 
 # Generated/ingested score-coverage sets (regenerable: generate_melodies.py / import_midi.py)
 evals/fixtures/scores_melody/
+evals/fixtures/scores_klangio/
+out/klangio_*
+
+# SoulX-Singer is cloned at runtime (repo + GB-scale weights); never commit it
+backends/soulx/SoulX-Singer/
+backends/*/.venv/

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voders-soulx-backend"
+version = "0.1.0"
+description = "Out-of-process SoulX-Singer zero-shot SVS backend for voders"
+# SoulX-Singer (Soul-AILab, Apache-2.0) is a git repo, not a PyPI package; the worker clones it and
+# runs cli/inference. Only the INFERENCE import surface is listed here — sageattention/nemo/funasr
+# are used solely by preprocess/tools (training-data prep) and are intentionally omitted.
+#
+# GB10/Blackwell: torch bumped from the upstream 2.2 pin to >=2.9 (cu130) so CUDA runs on sm_121;
+# transformers held on 4.x (the modeling_llama API SoulX builds on); numpy <2 per upstream.
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "torch>=2.9",
+    "torchaudio>=2.9",
+    "torchcodec",
+    # SoulX vendors a llama variant against the transformers 4.41 attention API; 4.43+ changed
+    # LlamaAttention.forward (added positional_embeddings), so pin to the 4.41/4.42 line.
+    "transformers>=4.41,<4.43",
+    "accelerate>=0.33,<1.0",
+    "omegaconf>=2.3",
+    "ml_collections>=0.1",
+    "einops>=0.8",
+    "librosa>=0.10.2",
+    "scipy>=1.13",
+    "numpy>=1.26,<2",
+    "soundfile>=0.12",
+    "huggingface-hub>=0.23,<0.26",
+    "tqdm",
+    "pyworld>=0.3.5",
+]
+
+[project.scripts]
+voders-soulx-backend = "voders_soulx_backend.worker:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

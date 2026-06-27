@@ -21,6 +21,14 @@ from voders.scores.models import Note
 
 _FRAME_PERIOD_MS = 5.0
 _ARTICULATION_DIP_MS = 18.0  # amplitude dip between same-pitch legato notes (edge case)
+# Adjacent notes separated by less than the validator's RMS frame (≈46 ms) render as one continuous
+# voiced run, so its energy-based onset detector can't split them (their onsets are lost). Carve a
+# silence valley WIDER than that window just before such a note's onset — re-articulating it as a
+# singer would — so every note is its own run. Trims the previous note's audible tail only (its
+# offset label is unchanged). The threshold sits below typical hand-built gaps so spacious scores
+# are untouched; it fires on the densely-packed real-singing phrases (Klangio) that need it.
+_ARTICULATION_VALLEY_MS = 75.0
+_ARTICULATION_MAX_GAP_S = 0.06
 
 # Realism, kept inside the alignment budget. Vibrato depth stays under the validator's ±25-cent
 # tolerance, and the attack/release are short relative to the onset/offset tolerances, so the audio
@@ -132,7 +140,7 @@ class DeterministicLane:
         total_samples = int(round(score.duration_s * SAMPLE_RATE)) + 1
         out = np.zeros(total_samples, dtype=np.float32)
 
-        dip_n = int(_ARTICULATION_DIP_MS * SAMPLE_RATE / 1000.0)
+        valley_n = int(_ARTICULATION_VALLEY_MS * SAMPLE_RATE / 1000.0)
         dynamics_applied = False
         for i, note in enumerate(score.notes):
             y = _render_note(note, sp_seq, ap_seq)
@@ -145,16 +153,19 @@ class DeterministicLane:
             start = int(round(note.onset_s * SAMPLE_RATE))
             end = min(start + y.size, out.size)
             out[start:end] += y[: end - start]
-            # Articulate same-pitch legato pairs with a brief amplitude dip (edge case).
+            # Re-articulate a note that would otherwise merge with its predecessor: carve a
+            # sub-floor silence valley before its onset so the RMS detector sees a new run (FR-007).
             prev = score.notes[i - 1] if i > 0 else None
-            if (
-                prev is not None
-                and prev.pitch_midi == note.pitch_midi
-                and abs(prev.offset_s - note.onset_s) < 1e-3
-            ):
-                d0 = max(0, start - dip_n // 2)
-                d1 = min(out.size, start + dip_n // 2)
-                out[d0:d1] *= np.linspace(0.3, 1.0, d1 - d0, dtype=np.float32)
+            if prev is not None and (note.onset_s - prev.offset_s) < _ARTICULATION_MAX_GAP_S:
+                prev_start = int(round(prev.onset_s * SAMPLE_RATE))
+                v0 = max(start - valley_n, (prev_start + start) // 2)  # keep ≥ half the prev note
+                if start > v0:
+                    # Hard silence (a full sub-floor frame) so the RMS detector breaks the run; a
+                    # short fade in avoids a click where the previous note's tail is cut.
+                    fade = min(int(0.005 * SAMPLE_RATE), (start - v0) // 2)
+                    if fade > 0:
+                        out[v0 : v0 + fade] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
+                    out[v0 + fade : start] = 0.0
 
         peak = float(np.max(np.abs(out))) if out.size else 0.0
         if peak > 0:
