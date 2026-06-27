@@ -178,8 +178,10 @@ pinned text (identical lyrics) without invoking the model again.
 - **Syllable/note count mismatch**: When a lyric source yields fewer or more syllables than notes, the
   unmatched notes fall back to the neutral open vowel ("ah"); the mismatch is recorded in provenance.
   No note label is dropped, added, or shifted (consistent with 001's existing mismatch policy).
-- **Melisma (one syllable across multiple notes)**: A single syllable sustained over tied/legato notes
-  is articulated once and held; the choice is recorded so alignment remains explainable.
+- **Melisma (one syllable across multiple notes)**: v1 is one-syllable-per-note (`per_note`); a
+  sustained single syllable across tied/legato notes (`sustain_ties`) is reserved and rejected by
+  config validation, so this mode does not silently produce mis-counted lyrics. A supplied lyric with
+  fewer syllables than notes is handled by the count-mismatch vowel fallback below, not by melisma.
 - **Empty 4th column / blank lyric**: An empty lyric cell is treated as "no lyric" (vowel fallback),
   identical to a three-column score; output stays byte-identical for fully lyric-free scores.
 - **Un-pronounceable or out-of-inventory text**: Supplied text the phonetic step cannot render is
@@ -317,8 +319,9 @@ pinned text (identical lyrics) without invoking the model again.
   data, and any theming is an operator-supplied string consumed only by the optional generated source.
 - The automatic source aims for phonetic *coverage*, not lyrical meaning; syllables need only be
   singable and pronounceable, not coherent words.
-- The default melisma policy assigns one syllable per note and sustains a single syllable across
-  explicitly tied/legato notes; a different policy can be configured but is not required for v1.
+- The melisma policy in v1 assigns one syllable per note (`per_note`); sustaining a single syllable
+  across tied/legato notes (`sustain_ties`) is a reserved option that v1 rejects with a "not yet
+  supported" validation error rather than silently accepting an unimplemented mode.
 - Only the expressive lane articulates lyrics; the deterministic and voice-conversion lanes are
   unaffected. Operators wanting consonant-bearing audio enable the expressive lane.
 - The operator holds the rights to any lyric-generation model and any operator-supplied lyric text; the

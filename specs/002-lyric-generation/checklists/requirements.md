@@ -57,3 +57,22 @@
   measurable (±25 cents / 10 ms, ≥99%) and technology-agnostic.
 - Scope note: amended the in-progress 002 spec in place (no new `003-…` feature/branch), because the
   constraint is intrinsic to "the vocal synthesis being added" — i.e. this feature.
+
+### Remediation 2026-06-27 — post-`/speckit-analyze` fixes
+
+Applied the analyze report's actionable findings (no new feature; edits only):
+- **I1/C1 (fixture-name drift)**: tasks now use the quickstart's canonical fixture names —
+  `lyrics-supplied.yaml` (T013, US1), `lyrics-smoke.yaml`=automatic (T026, US2),
+  `lyrics-generated.yaml` (T037, US4), `lyrics-offbaseline.yaml` (baseline). plan eval-strategy fixture
+  list updated to match.
+- **C2 (FR-005 untested)**: T002 now adds a failing `tests/unit/test_lyrics_imports.py` asserting
+  `import voders.lyrics` pulls in neither `torch` nor `phonemizer` — FR-005 is now a gated test, not
+  just a lint guard.
+- **U1 (melisma)**: v1 accepts only `melisma: per_note`; `sustain_ties` is reserved and rejected by
+  config validation (T010 contract test + T011 impl; spec edge case + Assumptions + data-model row
+  updated) so no unimplemented mode is silently accepted.
+- **V1 (SC-005 not eval-gated)**: T012 eval suite now asserts SC-005 (zero dropped/added/shifted note
+  labels across count mismatches).
+- **T2 (plan tree)**: plan source tree now lists `src/voders/lyrics/data/en_cv.txt`.
+- Re-validated: FR/SC coverage remains 100%; FR-005 upgraded from test-light to tested; no new
+  `[NEEDS CLARIFICATION]`.

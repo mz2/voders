@@ -97,7 +97,7 @@ Added to the existing `RunConfig` (`src/voders/config/models.py`). Default keeps
 | `source` | LyricSource | `vowel` | per-run lyric source selector (FR-013) |
 | `inventory` | str | `"en_cv"` | name of the checked-in syllable/phoneme inventory for `automatic` |
 | `g2p_backend` | str | `"espeak"` | G2P backend for articulation |
-| `melisma` | str | `"per_note"` | `per_note` (one syllable/note) \| `sustain_ties` (hold across tied notes) |
+| `melisma` | str | `"per_note"` | v1 accepts only `per_note` (one syllable/note); `sustain_ties` (hold across tied notes) is **reserved** and raises a "not yet supported" validation error until implemented |
 | `theme` | str \| None | `None` | **only** for `generated`; operator-supplied; never read from annotations (FR-011) |
 | `model` | LyricModel \| None | `None` | only for `generated` |
 | `cache_dir` | str | `"lyrics"` | subdir of `output_root` for pinned generated text (FR-012) |

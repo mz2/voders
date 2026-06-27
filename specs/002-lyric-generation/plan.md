@@ -88,8 +88,10 @@ per-sample provenance axis.
     cents and its onset/offset within 10 ms of the lyric-free baseline (after constant-delay
     compensation); a note exceeding either bound must be rejected, not admitted.
 - **Fixture:** the 001 fixture scores, plus (a) one 3-column lyric-free score, (b) one 4-column
-  supplied-lyric score, (c) a tiny CV inventory, and (d) a paired lyric-on/lyric-off config sharing a
-  seed for the differential check — all small text, Git-LFS unaffected (no new binaries).
+  supplied-lyric score, (c) a tiny CV inventory, and (d) the run configs `lyrics-supplied.yaml`
+  (supplied), `lyrics-smoke.yaml` (automatic, the canonical harness), `lyrics-generated.yaml`
+  (generated), and `lyrics-offbaseline.yaml` (lyric-free, shares a seed with the supplied config for
+  the differential check) — all small text, Git-LFS unaffected (no new binaries).
 
 ## Constitution Check
 
@@ -136,7 +138,8 @@ src/voders/
 │   ├── sampler.py       # seeded CV-syllable sampler; deterministic from sample_seed(stage="lyrics") (FR-004)
 │   ├── g2p.py           # syllables → phonemes (lazy phonemizer/espeak-ng), mapped to note durations (FR-006)
 │   ├── cache.py         # pin/lookup generated lyric text as <output_root>/lyrics/<hash>.jsonl (FR-012)
-│   └── coverage.py      # phonetic-coverage statistic for the stats report (FR-014, SC-003)
+│   ├── coverage.py      # phonetic-coverage statistic for the stats report (FR-014, SC-003)
+│   └── data/en_cv.txt   # checked-in consonant–vowel inventory for the automatic sampler (text, no binary)
 ├── render/
 │   ├── svs.py           # articulate a LyricPlan's phonemes when present; vowel otherwise (FR-006/007)
 │   └── backend_bridge.py# render_via_backend gains optional phonemes+durations in its JSON request
