@@ -14,6 +14,10 @@
 - Q: What happens to non-accepted samples (rejected, quarantined, flagged, license-refused)? → A: Full forensic retention — persist both the provenance record (with the rejection/quarantine reason and verdict) and the rendered audio for every non-accepted sample, stored separately from the training set so it is never trained on but remains fully auditable.
 - Q: What implementation language/runtime? → A: Python — orchestrator and the ML/audio primitives (renderers, voice conversion, augmentation) share one runtime; GPU lanes run PyTorch. No separate primary language.
 - Q: How is randomness seeded for reproducibility? → A: A single run-level master seed deterministically derives every per-sample and per-stage seed from stable identifiers (e.g., score ID + voice ID + stage name). Any individual sample is reproducible in isolation, independent of worker count or processing order.
+- Q: How does an operator specify a run? → A: A single declarative config file (e.g., YAML) names the score set, voice pool, augmentation profiles, master seed, and lane toggles for a run. Run config files are version-controlled in the repository, and the manifest embeds (or hash-references) the fully-resolved config so a run is a one-command replay.
+- Q: What of a run goes into version history? → A: The run's end-result record — the final manifest (JSONL) plus the resolved run config and the stats report — is committed to version history. Intermediate streaming checkpoints (the resume state) are NOT committed; they are scratch and git-ignored. The rendered audio corpus itself stays out of Git per the constitution's "generated corpora are never committed" rule and the local-disk / object-storage assumption.
+- Q: How is a voice's license/consent represented for the FR-011 refusal and SC-008 audit? → A: Two-field model per voice — a free-text license string plus a required boolean `consent_verified` flag. The system refuses to use any voice whose `consent_verified` is false (or missing) and surfaces the refusal in the manifest; the audit checks the flag, not a parsed string.
+- Q: What is the minimum note-duration cutoff for flag/reject? → A: It is not a fixed constant. The validator applies a configurable `min_note_ms` threshold whose default is calibrated from the input score annotation statistics (e.g., the shortest reliably-annotated note durations in the source dataset), rather than a hardcoded value. The earlier "~40 ms" and "50 ms × 2" mentions are illustrative, not normative.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -29,7 +33,7 @@ A data engineer takes a folder of singing scores — each score is a list of `(o
 
 1. **Given** a `.tsv` score with 50 notes, **When** the deterministic pipeline renders it, **Then** the output contains a 22,050 Hz mono audio file paired with a `.tsv` whose note rows are byte-identical to the input.
 2. **Given** the rendered audio for that score, **When** automated f0 verification compares the rendered pitch contour to the score, **Then** every note's measured f0 lies within ±25 cents of the score pitch for at least 80% of the note's sustained interval.
-3. **Given** a score containing a 60 ms note (shorter than the 50 ms onset tolerance window times two), **When** the pipeline renders it, **Then** the sample is either accepted with a flag or rejected with a clear reason logged to provenance.
+3. **Given** a score containing a note shorter than the configured `min_note_ms` threshold (calibrated from the input annotation statistics), **When** the pipeline renders it, **Then** the sample is either accepted with a flag or rejected with a clear reason logged to provenance.
 
 ---
 
@@ -100,7 +104,7 @@ A reviewer (or the same engineer auditing their own corpus) needs to answer ques
 ### Edge Cases
 
 - **Overlapping or polyphonic notes in a score**: Singing is monophonic; the system rejects scores with simultaneous pitches or splits them into separate monophonic tracks, with the choice surfaced in provenance.
-- **Sub-tolerance note duration**: Notes shorter than ~40 ms cannot be reliably bounded by the 50 ms onset tolerance; the system flags or rejects them rather than silently emitting unlearnable samples.
+- **Sub-tolerance note duration**: Notes shorter than a configurable `min_note_ms` threshold cannot be reliably bounded by the onset tolerance; the system flags or rejects them rather than silently emitting unlearnable samples. The threshold's default is calibrated from the input score annotation statistics (the shortest reliably-annotated durations in the source dataset), not a hardcoded constant.
 - **Legato pairs at the same pitch**: Two adjacent notes at the same pitch still require a perceptible articulation between them; deterministic synthesis inserts an amplitude dip or consonant.
 - **Augmentation that destroys the vocal**: If a reverb/codec/accompaniment combination drops the vocal SNR below a configurable floor, the sample is rejected.
 - **Empty or near-empty scores**: A score with zero notes produces no sample; a score with one note still goes through validation and may be accepted.
@@ -123,20 +127,23 @@ A reviewer (or the same engineer auditing their own corpus) needs to answer ques
 - **FR-008**: The system MUST record, for every accepted sample, a provenance entry — appended as one JSON object per line to a JSON Lines manifest — capturing the source score, renderer, voice/timbre identity, augmentation profile, random seed, and license tag for any donor voice involved. The manifest MUST support per-sample lookup, license audits, and aggregate statistics by scanning this log.
 - **FR-009**: The deterministic rendering and validation paths MUST run on commodity CPU hardware without requiring a GPU, so contributors can iterate locally before scaling on accelerated infrastructure.
 - **FR-010**: The system MUST allow the operator to scale the corpus along the timbre axis (more voice-conversion voices, more augmentation profiles) independently of the underlying score set.
-- **FR-011**: The system MUST refuse to use any voice whose license tag indicates an unconsented clone of a real identifiable person and MUST surface that refusal in the provenance manifest.
+- **FR-011**: Every enrolled voice MUST carry a free-text license string and a required boolean `consent_verified` flag. The system MUST refuse to use any voice whose `consent_verified` is false or missing — covering unconsented clones of real identifiable people — and MUST surface that refusal in the provenance manifest.
 - **FR-012**: The system MUST report aggregate corpus statistics — total samples, unique scores, unique voices, pitch distribution, duration distribution, augmentation coverage — before the corpus is exported for training.
 - **FR-013**: The system MUST be deterministic with respect to its configuration and a single run-level master seed, from which every per-sample and per-stage seed is deterministically derived using stable identifiers (e.g., score ID + voice ID + stage name). Any individual sample MUST be reproducible in isolation, independent of worker count or processing order, so that a published corpus manifest is sufficient to reproduce the corpus.
 - **FR-014**: The system MUST quarantine any sample whose vocal level after augmentation falls below the configured signal-to-accompaniment floor, rather than emit it into the training set.
 - **FR-015**: The system MUST be modular at the renderer boundary so that the deterministic lane, expressive neural-SVS lane, voice-conversion lane, and augmentation lane can each be enabled, disabled, or replaced independently.
+- **FR-016**: A corpus run MUST be specified by a single declarative config file (e.g., YAML) that names the score set, voice pool, augmentation profiles, master seed, and lane toggles. Run config files are intended to be version-controlled in the repository, and the manifest MUST embed or hash-reference the fully-resolved config so the run can be replayed with a single command.
+- **FR-017**: The run's end-result record — the final manifest, the resolved run config, and the aggregate stats report — MUST be committable to version history as text artifacts. Intermediate streaming checkpoints (resume state) MUST be git-ignored scratch, and the rendered audio corpus MUST NOT be committed to Git (per the constitution's binary-assets rule); it lives on local disk or operator object storage.
 
 ### Key Entities *(include if feature involves data)*
 
 - **Score**: An ordered sequence of `(onset, offset, MIDI pitch)` note tuples representing a melody; the authoritative ground truth for any sample derived from it.
 - **Sample**: An `(audio, paired score, provenance)` triple representing one rendered training example.
-- **Voice / Timbre**: A named singer identity — either an SVS voice bank, a voice-conversion voice, or a deterministic-vocoder donor — with an attached license tag.
+- **Voice / Timbre**: A named singer identity — either an SVS voice bank, a voice-conversion voice, or a deterministic-vocoder donor — carrying a free-text license string and a required boolean `consent_verified` flag (a voice with `consent_verified` false or missing is refused).
 - **Augmentation Profile**: An ordered, label-preserving sequence of transformations (e.g., reverb IR, codec, accompaniment mix, pitch/time perturbation) applied to a rendered sample.
 - **Renderer Lane**: One of the four orthogonal rendering paths — deterministic F0-driven, expressive neural SVS, voice conversion (timbre-only), or accompaniment/mix — each with its own input/output contract.
 - **Validation Verdict**: A per-sample alignment, level, and license check result that gates corpus admission and lives inside provenance.
+- **Run Config**: A single declarative, version-controlled file (e.g., YAML) that fully specifies one corpus run — score set, voice pool, augmentation profiles, master seed, and lane toggles. The manifest embeds or hash-references the resolved Run Config so the run is replayable.
 - **Corpus Manifest**: The complete, replayable description of which samples are in the corpus and how each one was produced, stored as a JSON Lines file (one provenance record per line, appended as samples are accepted).
 
 ## Success Criteria *(mandatory)*
@@ -150,7 +157,7 @@ A reviewer (or the same engineer auditing their own corpus) needs to answer ques
 - **SC-005**: The deterministic rendering and validation lane sustains at least 100 score-singer pairs per hour on a laptop-class CPU (4 cores, no GPU).
 - **SC-006**: At least 60% of accepted samples include at least one production-style augmentation stage (reverb, codec, or accompaniment mix) so the corpus is dominated by in-the-mix examples rather than dry studio renders.
 - **SC-007**: At least 95% of synthesized samples pass the automated alignment validator on the first attempt; the remaining 5% are flagged or rejected, never silently admitted.
-- **SC-008**: Zero samples in any exported corpus carry a donor voice whose license tag indicates an unconsented clone of a real person, verified by an end-of-run audit of the manifest.
+- **SC-008**: Zero samples in any exported corpus carry a donor voice whose `consent_verified` flag is false or missing, verified by an end-of-run audit of the manifest.
 - **SC-009**: Any published corpus can be regenerated end-to-end from its manifest plus the source scores within a documented bit/sample tolerance, demonstrating reproducibility.
 - **SC-010**: For samples produced by the expressive-renderer lane, the re-derived note onsets deviate from the original score by less than 50 ms in at least 90% of accepted notes; samples failing this bound are rejected, not relabelled silently.
 - **SC-011**: A single corpus run produces between 10,000 and 100,000 samples without exhausting commodity-machine memory, by streaming and checkpointing progress so an interrupted run resumes from the last completed shard rather than restarting.
