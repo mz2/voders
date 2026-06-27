@@ -1,0 +1,45 @@
+# Run Config contract (FR-016). Validated by pydantic at load; resolved form is hashed into the
+# manifest (config_hash) and written to config.resolved.yaml. Example with inline field rules.
+
+run_id: demo-run-001            # str, required, stable
+master_seed: 20260627           # int, required — all per-sample seeds derive from this (FR-013)
+
+scores: evals/fixtures/scores/  # path or glob to .tsv scores (FR-001)
+
+output_root: out/demo-run-001   # path, required
+
+voices:                         # enrolled voice pool (FR-011)
+  - voice_id: donor_ah_synth
+    kind: deterministic_donor   # svs_voicebank | voice_conversion | deterministic_donor
+    license: "CC0 synthetic vowel"
+    consent_verified: true      # required; false/missing -> voice refused
+    model_ref: evals/fixtures/voices/donor_ah_synth.wav
+
+lanes:                          # enable/disable + per-lane options (FR-015)
+  deterministic:
+    enabled: true
+    synth: world                # world (default, CPU) | nsf | ddsp | sine
+  voice_conversion:
+    enabled: false
+    auto_predict_f0: false      # MUST be false to preserve score f0 (research Decision 4)
+  svs:
+    enabled: false
+    mode: force_score_f0        # force_score_f0 | rederive_labels (FR-007)
+  augmentation:
+    enabled: false
+
+augmentation_profiles:          # ordered, label-preserving (FR-005)
+  - profile_id: mix_reverb_codec
+    steps: [reverb_ir, codec, accompaniment_mix]
+    params:
+      reverb_ir: { ir_set: reverbfx }
+      codec: { kind: mp3, bitrate_kbps: [96, 128] }
+      accompaniment_mix: { snr_db: [6, 12, 18] }
+
+validator:                      # tolerances (FR-006)
+  onset_ms: 50                  # SC-001
+  offset_rule: "max(50ms, 20%)" # SC-002
+  min_note_ms: null             # null -> calibrate from input annotation statistics
+  f0_cents: 25                  # ±25 cents
+  f0_coverage: 0.80             # over >=80% of sustained interval
+  snr_floor_db: 0               # below floor -> quarantine (FR-014)
