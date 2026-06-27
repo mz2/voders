@@ -1,0 +1,76 @@
+# voders task runner. Every action goes through uv (Constitution: Python Tooling — uv).
+# Run `just` (or `just --list`) to see all actions.
+#
+# `setup` is the prerequisite action; recipes that need the CPU environment depend on it.
+# `uv sync` is a fast no-op when the environment is already current, so depending on it is cheap.
+
+set shell := ["bash", "-uc"]
+
+config := "evals/fixtures/smoke.yaml"
+manifest := "out/smoke/manifest.jsonl"
+
+# List available actions.
+default:
+    @just --list
+
+# Prerequisite: create/update the CPU environment (Python 3.14 + CPU deps). Fast no-op if current.
+setup:
+    uv sync --extra cpu
+
+# Add the GPU extra (torch / torchaudio / torchcrepe) on a GPU machine.
+setup-gpu:
+    uv sync --extra cpu --extra gpu
+
+# Prerequisite for the out-of-process NNSVS backend: sync its standalone uv project (Python 3.11).
+setup-backends:
+    uv sync --project backends/svs
+
+# Generate the checked-in fixtures (scores + synthetic consented donor voices).
+fixtures: setup
+    uv run python evals/make_fixtures.py
+
+# Render a corpus from a run config (override: `just run config=path.yaml`).
+run config=config: setup
+    uv run voders run --config {{config}}
+
+# Evaluate a produced corpus against the Success Criteria (exits non-zero on a gated failure).
+eval manifest=manifest: setup
+    uv run voders eval --manifest {{manifest}}
+
+# License/consent audit over the manifest.
+audit manifest=manifest: setup
+    uv run voders audit --manifest {{manifest}}
+
+# Aggregate corpus statistics.
+stats manifest=manifest: setup
+    uv run voders stats --manifest {{manifest}}
+
+# Render the smoke fixtures then evaluate them end-to-end.
+smoke: fixtures
+    uv run voders run --config {{config}}
+    uv run voders eval --manifest {{manifest}}
+
+# Run the full test suite.
+test: setup
+    uv run pytest
+
+# Lint + format check + type check (zero-warning gate).
+lint: setup
+    uv run ruff check .
+    uv run ruff format --check .
+    uv run mypy
+
+# Auto-format the codebase.
+fmt: setup
+    uv run ruff format .
+
+# Deterministic-lane throughput benchmark against the SC-005 floor.
+bench: setup
+    uv run python evals/bench.py
+
+# Demonstrate the out-of-process NNSVS backend (its own uv project / Python 3.11).
+demo-svs-nnsvs: setup setup-backends
+    uv run voders run --config evals/fixtures/svs_nnsvs.yaml
+
+# Everything CI checks: lint, type, tests.
+check: lint test

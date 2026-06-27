@@ -5,20 +5,29 @@ The deterministic lane and validator run on a laptop CPU — no GPU needed.
 
 ## Install
 
+`voders` targets Python 3.14 and is managed with [uv](https://docs.astral.sh/uv/); every command
+runs through `uv run`.
+
 ```bash
 # core (CPU): deterministic lane + validator + manifest
-pip install -e ".[cpu]"
+uv sync --extra cpu
 
 # optional GPU lanes (neural SVS, voice conversion) — on the DGX Spark machines
-pip install -e ".[gpu]"
+uv sync --extra gpu
 ```
 
 Git LFS must be installed so the fixture audio resolves (`git lfs install` once per clone).
 
+## Generate the fixtures
+
+```bash
+uv run python evals/make_fixtures.py
+```
+
 ## Run the deterministic baseline on the fixtures
 
 ```bash
-python -m voders.cli run --config evals/fixtures/smoke.yaml --output-root out/smoke
+uv run voders run --config evals/fixtures/smoke.yaml --output-root out/smoke
 ```
 
 Produces under `out/smoke/`:
@@ -35,7 +44,7 @@ checkpoints/           # resume state (git-ignored)
 ## Evaluate against the Success Criteria
 
 ```bash
-python -m voders.cli eval --manifest out/smoke/manifest.jsonl
+uv run voders eval --manifest out/smoke/manifest.jsonl
 ```
 
 Prints a pass/fail table and exits non-zero on any gated failure:
@@ -54,7 +63,7 @@ informationally when a Basic Pitch eval harness is wired up; it is not gated her
 ## Audit licensing
 
 ```bash
-python -m voders.cli audit --manifest out/smoke/manifest.jsonl
+uv run voders audit --manifest out/smoke/manifest.jsonl
 ```
 
 ## Scale up

@@ -1,0 +1,35 @@
+# Smoke run config — deterministic lane only, CPU, laptop-runnable (Constitution IV, FR-009).
+run_id: smoke
+master_seed: 20260627
+
+scores: evals/fixtures/scores/*.tsv
+output_root: out/smoke
+
+voices:
+  - voice_id: donor_ah_synth
+    kind: deterministic_donor
+    license: "CC0 synthetic vowel"
+    consent_verified: true
+    model_ref: evals/fixtures/voices/donor_ah_synth.wav
+
+lanes:
+  deterministic:
+    enabled: true
+    synth: world
+
+validator:
+  onset_ms: 50
+  offset_min_ms: 50
+  offset_fraction: 0.20
+  min_note_ms: null        # learn from the annotation distribution (FR-018)
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0
+
+reproduction:
+  deterministic: bit_exact
+  neural:
+    same_verdict: true
+    f0_cents: 25
+    onset_ms: 10

@@ -1,29 +1,29 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.2.0 → 1.3.0
-Bump rationale: MINOR — a new governance section (Binary Assets & Large Files) and a matching quality gate are added. No existing principle is removed or reversed.
+Version change: 1.4.0 → 1.5.0
+Bump rationale: MINOR — Principle III is expanded to require the README carry current run/test instructions (with a matching gate-3 clause). No existing principle is removed or reversed.
 
 Modified principles:
-- (none renamed or removed)
+- III. Documentation Stays Current with the Repo — added the README run/test-instructions requirement.
 
 Added sections:
-- Binary Assets & Large Files (new top-level section)
-- Development Workflow & Quality Gates: gate 7 (Binaries go through LFS)
+- (none)
 
 Removed sections:
 - (none)
 
 Templates requiring updates:
 - ✅ `.specify/memory/constitution.md` — written
-- ✅ `.gitattributes` — created; tracks audio / model-weight / binary patterns via Git LFS
-- ✅ `.specify/templates/plan-template.md` — no edit; its Constitution Check is generic ("Gates determined based on constitution file") and picks up the new gate automatically
-- ✅ `.specify/templates/spec-template.md` — no edit; the binary-asset rule is a repo-hygiene gate, not a spec section
-- ✅ `.specify/templates/tasks-template.md` — no edit; no new principle-driven task category is implied
-- ✅ `CLAUDE.md` — no edit required
+- ✅ `README.md` — carries "Quickstart (uv)" + "Running tests / development" sections
+- ✅ `justfile` — task runner exposing the run/test/setup actions the README points at
+- ✅ `.specify/templates/*` — no edit; generic Constitution Check picks up the expanded gate
 
 Follow-up TODOs:
-- None. git-lfs (3.7.1) is installed locally; CI MUST ensure git-lfs is available so LFS-tracked fixtures resolve on checkout.
+- None.
+
+Prior change (1.3.0 → 1.4.0): added Python Tooling: uv section and gate 8.
+Prior change (1.2.0 → 1.3.0): added Binary Assets & Large Files section and LFS gate 7.
 -->
 
 # Voders Constitution
@@ -45,6 +45,8 @@ The project's configured linters and formatters MUST run clean — zero errors a
 ### III. Documentation Stays Current with the Repo
 
 Documentation that lives in this repository — `README.md`, `CLAUDE.md`, `docs/**`, specs under `specs/**`, the constitution itself, and per-feature plans/tasks — MUST be updated in the same change set as the code or behaviour they describe. If a public command, configuration key, file format, or invariant changes, the corresponding documentation lines change in the same PR. Stale or contradictory documentation MUST be deleted, not left "for later". Reviewers MUST reject PRs whose code-versus-docs delta is incoherent.
+
+`README.md` MUST carry current instructions for **running** the project and **running its tests** — the exact commands a contributor invokes (e.g. via the project task runner) — and these MUST be kept accurate as commands, prerequisites, or task names change. A reader following the README's run and test instructions on a clean checkout MUST succeed; instructions that no longer work are a defect, not a documentation nicety.
 
 **Rationale:** Documentation drift is silent and compounds. The only sustainable way to keep docs honest is to make them part of the change, not a follow-up.
 
@@ -113,17 +115,47 @@ size permanently — it stays in history even after deletion and is painful to e
 binaries through LFS keeps the working history small and makes the line explicit between "a small
 asset we version" and "a large output we store elsewhere".
 
+## Python Tooling: uv
+
+All Python runtime, dependency, and task management in this repository MUST go through
+[uv](https://docs.astral.sh/uv/) — the single tool that pins the interpreter, resolves and locks
+dependencies, and runs project commands. The rules:
+
+- **uv owns the interpreter and the environment.** The Python version is pinned with uv
+  (`uv python pin`, recorded in `.python-version`) and the environment is created and updated only
+  by `uv sync`. Hand-rolled `python -m venv`, bare `pip install`, `conda`, or
+  `poetry`/`pdm`/`pipenv` workflows are forbidden.
+- **Dependencies live in `pyproject.toml` and `uv.lock`.** Runtime deps go under
+  `[project.dependencies]` / `[project.optional-dependencies]`; tooling goes under
+  `[dependency-groups]`. The resolved `uv.lock` MUST be committed so installs are reproducible
+  (this is the dependency-side companion to FR-013's seed reproducibility). Never edit `uv.lock` by
+  hand; regenerate it with uv.
+- **Every Python action is invoked through uv.** Tests, linters, type-checks, the CLI, and the eval
+  harness run via `uv run …` (e.g., `uv run pytest`, `uv run ruff check`, `uv run voders run …`).
+  Documentation, scripts, and CI MUST show the `uv`-prefixed form. A "bare" Python invocation that
+  bypasses uv (calling a global `python`/`pip`, or executing a loose script outside `uv run`) is a
+  defect.
+- **Keep `pyproject.toml` authoritative.** When a dependency, extra, or dev tool changes, update
+  `pyproject.toml` and re-run `uv sync`/`uv lock` in the same change set (Principle III).
+
+**Rationale:** A single, lock-backed tool for the interpreter and dependencies makes every
+contributor's and every CI run's environment identical, which is what reproducibility (FR-013,
+SC-009) demands at the dependency layer. Mixing package managers is how environments drift and
+"works on my machine" bugs appear; uv removes that whole class of problem and is fast enough that
+there is no reason to reach around it.
+
 ## Development Workflow & Quality Gates
 
 The following gates apply to every PR before it is mergeable:
 
 1. **Failing test first.** The diff MUST include at least one test that was committed in a state where it failed against the prior code, then passed under the new code. Reviewers MAY ask the author to demonstrate the failing state.
 2. **Lint and format clean.** `lint` and `format` (or their language-specific equivalents named in this repo) MUST exit zero with no warnings.
-3. **Docs and code move together.** If the diff touches a public-facing surface (CLI flag, config key, file format, exported function/API, or a documented invariant), the same diff MUST update the corresponding docs.
+3. **Docs and code move together.** If the diff touches a public-facing surface (CLI flag, config key, file format, exported function/API, or a documented invariant), the same diff MUST update the corresponding docs. In particular, the `README.md` run and test instructions MUST still work on a clean checkout after the change.
 4. **Constitution alignment.** Any PR that introduces a violation of the principles above MUST either fix the violation or include a Complexity Tracking entry in the plan (per `plan-template.md`) with explicit justification and a remediation owner.
 5. **Evaluation harness present.** Non-trivial feature PRs MUST check in a runnable harness (single-command invocation) and a runnable evaluation (single-command verdict against the spec's Success Criteria). Reviewers MUST run the evaluation locally or in CI before approving. Trivial PRs as defined in Principle IV are exempt.
 6. **Writing readable.** Reviewers MUST flag prose that violates Principle V — undefined ML jargon, padding, marketing language — and the author MUST fix it before merge.
 7. **Binaries go through LFS.** Any binary file in the diff MUST be LFS-tracked via a matching `filter=lfs` pattern in `.gitattributes`. Reviewers MUST reject diffs that add raw binary blobs or commit generated corpora.
+8. **Python actions go through uv.** Dependencies are declared in `pyproject.toml` with a committed `uv.lock`; the environment is created by `uv sync`; tests, lint, type-check, the CLI, and the eval harness are invoked via `uv run` (per *Python Tooling: uv*). Reviewers MUST reject diffs that introduce bare `pip`/`venv`/`conda`/`poetry` workflows or document non-`uv` Python invocations.
 
 `/speckit-plan` MUST run its Constitution Check against this file and MUST capture, inside Technical Context or Project Structure, the feature's *Evaluation strategy* — the command(s) that run the feature, the command(s) that evaluate it, and the pass/fail criterion referenced back to the spec's Success Criteria. `/speckit-tasks` MUST emit (a) test tasks for every user story (Principle I supersedes the template's "tests are OPTIONAL" note) and (b) at least one evaluation-harness task per user story, ordered before the implementation tasks for that story. `/speckit-implement` MUST refuse to mark an implementation task complete while lint, test, or evaluation gates fail.
 
@@ -141,4 +173,4 @@ This constitution is the authoritative source of project-wide rules. Where a tem
 
 **Compliance review.** Compliance is checked on every PR via the gates in *Development Workflow & Quality Gates*. The constitution itself is reviewed at least once per release cycle; the reviewer confirms that the principles still reflect how the team actually wants to work and proposes amendments if not.
 
-**Version**: 1.3.0 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-06-27
+**Version**: 1.5.0 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-06-27

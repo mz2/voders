@@ -1,0 +1,28 @@
+# SVS lane via the out-of-process NNSVS backend (backends/svs, Python 3.11).
+# The core (3.14) renders this lane by calling the backend across a process boundary.
+run_id: svs_nnsvs
+master_seed: 20260627
+
+scores: evals/fixtures/scores/score_00[0-1].tsv
+output_root: out/svs_nnsvs
+
+voices:
+  - voice_id: svs_ah
+    kind: svs_voicebank
+    license: "CC0 synthetic vowel"
+    consent_verified: true
+    model_ref: evals/fixtures/voices/donor_ah_synth.wav
+
+lanes:
+  svs:
+    enabled: true
+    backend: nnsvs        # out-of-process backend in backends/svs
+    mode: force_score_f0
+
+validator:
+  onset_ms: 50
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0

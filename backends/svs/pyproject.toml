@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voders-svs-backend"
+version = "0.1.0"
+description = "Out-of-process SVS render backend for voders (separate dependency chain)"
+# NNSVS's numba/llvmlite chain has no Python 3.14 wheels, so this backend pins an older
+# interpreter than the 3.14 core. That is exactly why it is its own uv project: the core stays on
+# 3.14 and talks to this backend across a process boundary (see src/voders/render/backend_bridge.py).
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "numpy<2",
+    "scipy>=1.11",
+    "soundfile>=0.12",
+    "nnsvs>=0.1.1",
+    "h5py",  # nnsvs.usfgan imports h5py but does not declare it
+]
+
+[project.scripts]
+voders-svs-backend = "voders_svs_backend.worker:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
