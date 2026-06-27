@@ -1,0 +1,229 @@
+---
+description: "Task list for Optional Lyric Generation & Phonetic Diversity"
+---
+
+# Tasks: Optional Lyric Generation & Phonetic Diversity
+
+**Input**: Design documents from `/specs/002-lyric-generation/`
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/
+
+**Tests**: REQUIRED. The constitution (Principle I, NON-NEGOTIABLE) overrides the template's
+"tests optional" note: every behavioural task starts as a failing test, and per the `/speckit-tasks`
+gate each user story carries a test task **and** an evaluation-harness task ordered before its
+implementation.
+
+**Organization**: Tasks grouped by user story (US1=P1 … US4=P4). MVP = Phase 1 + 2 + US1.
+
+## Path Conventions
+
+Single Python project: `src/voders/`, `tests/`, `evals/`, optional out-of-process `backends/lyrics/`.
+All commands run via `uv` (constitution: Python Tooling).
+
+---
+
+## Phase 1: Setup (Shared Infrastructure)
+
+**Purpose**: dependencies and package scaffolding for the lyric layer.
+
+- [ ] T001 Add a `lyrics` optional extra (`phonemizer>=3.3`) to `[project.optional-dependencies]` in `pyproject.toml`, regenerate `uv.lock` via `uv lock`, and record the espeak-ng system prerequisite in `README.md` (run/test instructions, constitution gate 3).
+- [ ] T002 [P] Scaffold the CPU lyric package: `src/voders/lyrics/__init__.py` (empty, no torch/phonemizer import at module load — FR-005).
+- [ ] T003 [P] Scaffold the optional out-of-process generated backend: `backends/lyrics/pyproject.toml`, `backends/lyrics/.python-version`, `backends/lyrics/src/voders_lyrics_backend/__init__.py` (own uv project; not synced by default).
+
+**Checkpoint**: package + extra exist; CPU baseline still imports with no new heavy deps.
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: the shared data carriers, config selector, manifest axis, and source interface every
+story depends on. **No user story may start until this phase is complete.** All preserve SC-001
+byte-identity for lyric-free runs.
+
+- [ ] T004 [P] Failing unit test landing the prototype: `tests/unit/test_lyrics.py` — 3-column score parses with `lyric=None`; 4th column parsed as lyric; `serialize_score` stays 3-column when lyric-free, 4-column otherwise (from the `lyrics` branch; copy/cherry-pick).
+- [ ] T005 Add optional `lyric: str | None = None` to `Note` in `src/voders/scores/models.py`; make `parse_tsv` read an optional 4th column and `serialize_score` emit it only when a score carries lyrics, in `src/voders/scores/parse.py` (FR-002, SC-001; makes T004 pass).
+- [ ] T006 [P] Failing unit test for lyric models: `tests/unit/test_lyric_models.py` — `LyricPlan` length invariant (== note count), `text_hash` determinism, `LyricModel.license_ok` gate (FR-008/010).
+- [ ] T007 [P] Implement `LyricSource` enum, `LyricPlan`, `LyricModel`, and `Phoneme run` dataclasses in `src/voders/lyrics/models.py` per data-model.md (makes T006 pass).
+- [ ] T008 [P] Failing contract test for the source interface: `tests/contract/test_lyric_source.py` — every source returns a `LyricPlan` with `len(syllables)==len(notes)`; `vowel` returns all-`None`; count reconciliation sets `mismatch=True` and never drops/shifts notes (contracts/lyric-source.md, FR-008/SC-005).
+- [ ] T009 Implement the `LyricSource` Protocol + a `vowel` source + a `resolve_source(config)` factory and the count-reconciliation helper in `src/voders/lyrics/sources.py` (makes T008 pass; `automatic`/`supplied`/`generated` land in their story phases).
+- [ ] T010 [P] Failing contract test for config + manifest deltas: `tests/contract/test_lyrics_config_manifest.py` — `RunConfig` accepts a `lyrics` block defaulting to `source: vowel`; `theme`/`model` with `source!=generated` is a validation error; `ProvenanceRecord` accepts the 5 new lyric fields with backward-compatible defaults (contracts/manifest-and-config-deltas.md).
+- [ ] T011 Add `LyricsConfig` (with validation rules) to `src/voders/config/models.py` and the lyric provenance fields (`lyric_source`, `lyric_hash`, `lyric_model`, `lyric_model_license`, `lyric_articulated`) to `ProvenanceRecord` in `src/voders/manifest/models.py` (FR-009/010/013; makes T010 pass).
+
+**Checkpoint**: data carriers, config selector, manifest axis, and source interface exist; a
+`source: vowel` run is byte-identical to pre-feature (verify SC-001 before proceeding).
+
+---
+
+## Phase 3: User Story 1 - Sing supplied lyrics with the label safety net + no pitch/timing shift (Priority: P1) 🎯 MVP
+
+**Goal**: the expressive (SVS) lane articulates supplied syllables as phonemes instead of a flat
+vowel, under 001's force-score-F0 / re-derive safety net, with a **gated guarantee that adding vocal
+synthesis shifts neither pitch nor timing** versus the lyric-free render of the same (score, voice,
+seed) (FR-006/007/015/016/017/018, SC-002/008/009).
+
+**Independent Test**: render a syllable-bearing score through the SVS lane; confirm consonants are
+present and audible, labels pass tolerance or the sample is rejected, and the differential (lyric-on
+vs lyric-off, same seed) pitch/onset deltas are within ±25 cents / 10 ms.
+
+### Evaluation harness for User Story 1 (constitution Principle IV — before impl)
+
+- [ ] T012 [US1] Add the `lyrics` eval suite + differential mode to `src/voders/cli/eval.py` and `evals/run_eval.py`: `uv run voders eval --manifest <out> --suite lyrics [--differential <lyric_free_manifest>]` prints a pass/fail table for SC-001/002/008/009 and exits non-zero on any gated failure (FR-018).
+- [ ] T013 [P] [US1] Add fixtures: `evals/fixtures/lyrics-smoke.yaml` (SVS lane, supplied source) and a paired lyric-free `evals/fixtures/lyrics-offbaseline.yaml` sharing the same master seed, plus a 4-column supplied-lyric score under `evals/fixtures/scores/` (quickstart.md §3).
+
+### Tests for User Story 1 (write first, must fail)
+
+- [ ] T014 [P] [US1] Integration test `tests/integration/test_us1_lyrics_svs.py`: SVS lane articulates a supplied syllable (phoneme energy/consonant present vs the vowel render) and, in force-score-F0 mode, `label_score == score` and passes onset/offset/pitch tolerance (SC-002).
+- [ ] T015 [P] [US1] Integration test `tests/integration/test_us1_no_shift.py`: render the same (score, voice, seed) with and without lyrics; assert per-note pitch within ±25 cents (SC-008) and onset/offset within 10 ms after constant-delay compensation (SC-009); a deliberately mis-timed phoneme stub is rejected, not admitted.
+- [ ] T016 [P] [US1] Unit test `tests/unit/test_g2p.py`: syllable → phonemes maps the vowel nucleus onset to the note onset, leading consonants into a pre-onset window, trailing into a pre-offset window (Decision L3); out-of-inventory text falls back to the open vowel.
+
+### Implementation for User Story 1
+
+- [ ] T017 [US1] Implement the `supplied` source (read `Note.lyric` → `LyricPlan`) in `src/voders/lyrics/sources.py` (FR-002).
+- [ ] T018 [P] [US1] Implement `src/voders/lyrics/g2p.py`: lazy `phonemizer`/espeak-ng import, syllables → `Phoneme run`s mapped to note durations, vowel-on-the-beat, vowel fallback for un-pronounceable text (FR-006; makes T016 pass).
+- [ ] T019 [US1] Register an `svs_articulation` method timing budget (frame hop + constant lead-in group delay) in `src/voders/validate/timing.py` so the validator subtracts the articulation path's constant delay before comparing onsets (FR-017).
+- [ ] T020 [US1] Wire the SVS lane to articulate a `LyricPlan` when present: pass phonemes through `render_via_backend` (extend the JSON request) and the in-process CPU path in `src/voders/render/svs.py`; keep `force_score_f0` pitch score-derived (FR-015 by construction) and `rederive_labels` gated (FR-007). Set `lyric_articulated=True` only here.
+- [ ] T021 [US1] Implement the differential no-shift check used by T015 and the eval suite: compare a lyric render's per-note measured pitch/onset/offset to the lyric-free baseline render of the same seed; record the largest deltas in the verdict `notes`; force-reject notes exceeding ±25 cents / 10 ms (FR-016/018, SC-008/009).
+- [ ] T022 [US1] Ensure the deterministic and voice-conversion lanes leave audio unchanged when a lyric is present and set `lyric_articulated=False` (FR-006 edge case) — guard in `src/voders/render/deterministic.py` and `src/voders/render/voiceconv.py`.
+
+**Checkpoint**: `uv run voders eval --suite lyrics --differential …` is green for SC-001/002/008/009;
+the SVS lane sings consonants with no pitch/timing shift. **MVP deliverable.**
+
+---
+
+## Phase 4: User Story 2 - Automatic syllable source for corpus-scale phonetic diversity (Priority: P2)
+
+**Goal**: a seeded, CPU, dependency-free syllable source that needs no lyric input data and broadens
+phonetic coverage, reproducible independent of worker count (FR-003/004/005, SC-003/004).
+
+**Independent Test**: enable `source: automatic` with a fixed seed; re-run at different worker counts
+→ identical syllables; corpus phoneme inventory ≥10× the vowel baseline.
+
+### Evaluation harness for User Story 2
+
+- [ ] T023 [US2] Extend the `lyrics` eval suite to assert SC-003 (distinct sung-phoneme inventory ≥10× vowel baseline) and SC-004 (identical syllables across a 1-worker vs N-worker re-run) in `evals/run_eval.py` + `src/voders/cli/eval.py`.
+
+### Tests for User Story 2 (write first, must fail)
+
+- [ ] T024 [P] [US2] Unit test `tests/unit/test_sampler.py`: `sample_seed(master, score_id, voice_id, "lyrics")`-seeded sampler is deterministic and order/worker-independent; coverage-biased draws span the inventory (SC-004).
+- [ ] T025 [P] [US2] Integration test `tests/integration/test_us2_automatic.py`: an `automatic` run assigns one singable syllable per note and the phoneme inventory exceeds the vowel baseline by ≥10× (SC-003); sub-`min_note_ms` notes follow 001's short-note policy.
+
+### Implementation for User Story 2
+
+- [ ] T026 [P] [US2] Add the checked-in consonant–vowel inventory `src/voders/lyrics/data/en_cv.txt` (small text; no binary).
+- [ ] T027 [US2] Implement `src/voders/lyrics/sampler.py`: seeded, coverage-biased CV-syllable sampler (makes T024 pass), and wire the `automatic` source into `src/voders/lyrics/sources.py` (FR-003/004).
+- [ ] T028 [P] [US2] Implement `src/voders/lyrics/coverage.py`: distinct sung-phoneme count for a corpus vs the vowel baseline (used by T023; FR-014/SC-003).
+
+**Checkpoint**: `source: automatic` produces reproducible, phonetically-diverse corpora on CPU.
+
+---
+
+## Phase 5: User Story 3 - Lyric provenance and source/license audit (Priority: P3)
+
+**Goal**: every sample records its lyric source + text hash; model sources record id + license and are
+refused when the license is unacceptable; stats report the lyric breakdown (FR-009/010/014, SC-006).
+
+**Independent Test**: run each source, query the manifest for the lyric axis, and confirm a
+license-refused model produces no samples and is surfaced.
+
+### Evaluation harness for User Story 3
+
+- [ ] T029 [US3] Extend the `lyrics` eval suite / `src/voders/cli/audit.py` to assert SC-006: every record has `lyric_source` + (non-vowel) `lyric_hash`; zero samples carry a license-refused lyric model.
+
+### Tests for User Story 3 (write first, must fail)
+
+- [ ] T030 [P] [US3] Integration test `tests/integration/test_us3_lyric_provenance.py`: records carry the correct `lyric_source`/`lyric_hash` per source; a `LyricModel` with `license_ok=false` yields a `license_refused` outcome and no sample (FR-010/SC-006).
+- [ ] T031 [P] [US3] Unit test `tests/unit/test_lyric_stats.py`: the stats report includes the lyric-source breakdown and phonetic-coverage summary (FR-014).
+
+### Implementation for User Story 3
+
+- [ ] T032 [US3] Populate the lyric provenance fields when writing records in the orchestrator/`src/voders/cli/run.py` (source, hash, model id/license, articulated flag) (FR-009).
+- [ ] T033 [US3] Enforce the `LyricModel` license gate in `src/voders/lyrics/sources.py` (refuse + surface, mirroring `Voice.consent_verified`) (FR-010).
+- [ ] T034 [US3] Add the lyric-source breakdown + phonetic-coverage summary to the stats output in `src/voders/cli/stats.py` (FR-014; makes T031 pass).
+
+**Checkpoint**: lyric composition is fully auditable; license discipline extends to lyric models.
+
+---
+
+## Phase 6: User Story 4 - Themed generated lyrics, reproducible without re-running the model (Priority: P4)
+
+**Goal**: an optional, opt-in model-driven source from a theme string; generated text is produced once
+and pinned so replay never re-invokes the model (FR-011/012, SC-007). Fully droppable.
+
+**Independent Test**: generate with a theme, record the pinned artifact, regenerate from the manifest,
+confirm the pinned text is reused verbatim with zero model re-invocations.
+
+### Evaluation harness for User Story 4
+
+- [ ] T035 [US4] Extend the `lyrics` eval suite to assert SC-007: a generated run replays from `<output_root>/lyrics/<hash>.jsonl` with zero model calls and meets 001's per-lane reproduction tolerance (`evals/run_eval.py`).
+
+### Tests for User Story 4 (write first, must fail)
+
+- [ ] T036 [P] [US4] Unit test `tests/unit/test_lyric_cache.py`: pin/lookup of generated text by sha256; replay reads the pinned file and never invokes the model (FR-012).
+- [ ] T037 [P] [US4] Integration test `tests/integration/test_us4_generated.py`: a `generated` run (stub/mock model) pins text, count-matches notes (vowel fallback on mismatch), and regenerates identically from the manifest (SC-007).
+
+### Implementation for User Story 4
+
+- [ ] T038 [P] [US4] Implement `src/voders/lyrics/cache.py`: write/read `<output_root>/<cache_dir>/<sha256>.jsonl` pinned artifacts (FR-012; makes T036 pass).
+- [ ] T039 [US4] Implement the `generated` source in `src/voders/lyrics/sources.py`: run-once pre-pass via the out-of-process `backends/lyrics` worker, cache + pin, theme/model validation (FR-011).
+- [ ] T040 [P] [US4] Implement the generated backend worker `backends/lyrics/src/voders_lyrics_backend/worker.py` (constrained-decoding default / SongComposer alt per research Decision L1) and the `render_via_backend` lyrics request in `src/voders/render/backend_bridge.py`.
+
+**Checkpoint**: optional themed generation works and replays deterministically from pinned text.
+
+---
+
+## Phase 7: Polish & Cross-Cutting Concerns
+
+- [ ] T041 [P] Update `README.md` (espeak-ng prereq, `uv sync --extra lyrics`, lyric source usage) and confirm `specs/002-lyric-generation/quickstart.md` runs end-to-end on a clean checkout (constitution gate 3).
+- [ ] T042 Run `uv run ruff check` + `uv run ruff format --check` + `uv run mypy` clean across the new `src/voders/lyrics/` and changed files (constitution gate 2); guard the lazy `phonemizer` import.
+- [ ] T043 [P] Run the full `uv run voders eval --suite lyrics --differential …` against all four sources and record the SC-001..SC-009 pass table in the PR (constitution gate 5).
+
+---
+
+## Dependencies & Execution Order
+
+### Phase dependencies
+
+- **Setup (P1: T001–T003)** → no deps.
+- **Foundational (P2: T004–T011)** → depends on Setup; **BLOCKS all user stories**.
+- **US1 (P3)** → after Foundational. The MVP; also lands the no-shift guarantee.
+- **US2 (P4)** → after Foundational. Independent of US1 (different files: sampler/coverage/inventory), but its SVS articulation rides US1's g2p/svs wiring at run time.
+- **US3 (P5)** → after Foundational; reads provenance written by any source (lightest with US1/US2 present).
+- **US4 (P6)** → after Foundational; independent, fully droppable.
+- **Polish (P7)** → after the desired stories.
+
+### Within each story
+
+Eval-harness task → tests (must fail) → implementation. Models before sources before lane wiring.
+
+### Parallel opportunities
+
+- Setup: T002, T003 in parallel.
+- Foundational: T004, T006, T008, T010 (tests) in parallel; then T005/T007/T009/T011 (note T009 depends on T007, T011 on its test).
+- US1 tests T014/T015/T016 in parallel; impl T018 parallel to T017/T019.
+- US2 T024/T025 in parallel; T026/T028 parallel to T027.
+- After Foundational, US1–US4 can be staffed in parallel by different developers.
+
+---
+
+## Implementation Strategy
+
+### MVP (Phase 1 + 2 + US1)
+
+1. Setup → Foundational → verify SC-001 byte-identity.
+2. US1: eval harness + differential check first, then SVS articulation.
+3. **STOP and VALIDATE**: `uv run voders eval --suite lyrics --differential …` green for
+   SC-001/002/008/009 — lyrics are sung with no pitch/timing shift. Ship.
+
+### Incremental delivery
+
+US1 (MVP) → US2 (automatic diversity at scale) → US3 (audit before any release) → US4 (optional
+themed generation). Each story is independently testable and adds value without breaking the prior.
+
+---
+
+## Notes
+
+- [P] = different files, no incomplete-task dependency. [US#] maps to spec.md user stories.
+- Constitution: tests fail before impl; every Python action via `uv run`; no AI-attribution trailers;
+  no new binaries (inventory + fixtures are text; model weights live in the out-of-process backend).
+- The no-shift guarantee (FR-015/016/017/018) is enforced **relative to the lyric-free baseline** and
+  gated by rejection — it is implemented across T015/T019/T020/T021 inside US1.

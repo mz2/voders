@@ -120,6 +120,11 @@ explicitly. All default such that existing lyric-free runs serialize compatibly.
 | `lyric_model_license` | str \| None | `None` | license tag for `generated` (FR-010) |
 | `lyric_articulated` | bool | `False` | true only when the lane actually sang phonemes (the SVS lane); false for the deterministic/VC lanes even if a lyric was present (FR-006 edge case) |
 
+The **no-shift** guarantee (FR-015/FR-016, SC-008/SC-009) needs no new stored field: the per-note
+pitch and onset/offset deltas of a lyric render versus the lyric-free baseline are computed by the
+differential eval harness (FR-018) and, when an SVS sample is articulated, the largest such deltas are
+recorded in the existing free-form `notes` map (alongside 001's `max_onset_dev_ms`) for audit.
+
 ## Lyric cache artifact (new — on disk, FR-012)
 
 `<output_root>/lyrics/<sha256>.jsonl` — one JSON record per score (`score_id`, ordered `syllables`,

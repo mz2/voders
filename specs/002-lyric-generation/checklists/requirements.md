@@ -44,3 +44,16 @@
     annotations (FR-011), per the operator constraint.
 - Tool/model names (espeak-ng, DiffSinger, specific lyric models, CMUdict) are deliberately deferred
   to `/speckit-plan`; the spec stays at outcome/altitude level.
+
+### Amendment 2026-06-27 — "no timing or pitch shift from added vocal synthesis"
+
+- Added as a **differential (lyric-on vs lyric-off) null-difference guarantee** rather than a new
+  feature: Clarifications session entry; US1 acceptance scenario 4; two edge cases (net lead-in/latency,
+  articulation perturbing pitch); FR-015 (pitch neutrality), FR-016 (timing neutrality), FR-017
+  (constant-delay compensation), FR-018 (differential harness); SC-008 (no pitch shift), SC-009 (no
+  timing shift); two assumptions. Dependent docs synced: plan eval strategy + constraints, research
+  Decision L4 addendum, quickstart eval table, data-model diagnostics note.
+- Re-validated: all checklist items still pass; 0 `[NEEDS CLARIFICATION]`. The new criteria are
+  measurable (±25 cents / 10 ms, ≥99%) and technology-agnostic.
+- Scope note: amended the in-progress 002 spec in place (no new `003-…` feature/branch), because the
+  constraint is intrinsic to "the vocal synthesis being added" — i.e. this feature.

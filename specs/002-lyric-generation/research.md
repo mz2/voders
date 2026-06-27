@@ -80,6 +80,17 @@ labels are guaranteed*.
 dictionary) — deferred; the energy-based re-derivation already gates onset drift, and a phoneme-level
 aligner is a later precision upgrade, not required for SC-002.
 
+**No-shift (pitch/timing neutrality) addendum (FR-015–FR-018, SC-008/SC-009):** Beyond the absolute
+score-tolerance gate, the lyric layer must introduce **no pitch or timing shift relative to the
+lyric-free render of the same (score, voice, seed)**. Pitch neutrality is free in `force_score_f0`
+mode (the f0 is the score's, independent of phonemes); a differential test guards a misbehaving
+backend. Timing neutrality is the real new guarantee: the labeled onset is the vowel nucleus on the
+score beat, leading consonants live in a pre-onset window, any constant G2P/vocoder lead-in delay is
+subtracted (001 FR-019), and a residual per-note onset/offset delta versus the lyric-free baseline
+beyond the validator's 10 ms resolution forces rejection. The evaluation harness verifies this by
+rendering each fixture twice — lyric-on and lyric-off at the same seed — and asserting near-zero
+per-note pitch and onset/offset deltas (the gated "no shift from adding vocal synthesis" verdict).
+
 ## Decision L5 — Reproducibility of the non-deterministic `generated` source
 
 **Decision:** **Cache-as-artifact.** The `generated` model runs once per score set as a pre-pass; its

@@ -86,6 +86,16 @@ failure:
 | zero dropped/added/shifted note labels across count mismatches | SC-005 |
 | every record has `lyric_source` + `lyric_hash`; zero license-refused models | SC-006 |
 | generated run replays from the pinned artifact, zero model re-invocations | SC-007 |
+| no pitch shift vs lyric-free baseline (same seed): within ±25 cents | SC-008 |
+| no timing shift vs lyric-free baseline (same seed): onset/offset within 10 ms | SC-009 |
+
+The last two are a **differential** check: the harness renders each fixture score twice for the same
+seed — once with lyrics, once lyric-free — and asserts adding vocal synthesis moved neither the pitch
+nor the labeled onset/offset of any accepted note (FR-018). It runs with:
+
+```bash
+uv run voders eval --manifest /tmp/lyrics/manifest.jsonl --suite lyrics --differential /tmp/vowel/manifest.jsonl
+```
 
 ## What changed vs. 001
 

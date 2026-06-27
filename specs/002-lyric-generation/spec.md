@@ -28,6 +28,24 @@ that foundation: it makes lyrics **audible** (sung as phonemes by the expressive
 2. The supplied annotations carry **no lyric or theme data**. Any theming exists only as a generated
    input the operator opts into — it is never read from the score set.
 
+## Clarifications
+
+### Session 2026-06-27
+
+- Q: What does "no timing or pitch shift from adding vocal synthesis" mean operationally? → A: A
+  **differential (lyric-on vs lyric-off) null-difference guarantee**. For the same (score, voice,
+  seed), rendering *with* lyrics MUST NOT move a note's pitch or its labeled onset/offset relative to
+  rendering the *same* input *without* lyrics (the open-vowel render). The lyric layer is required to
+  be **pitch-neutral and timing-neutral** with respect to the labels: it changes *what phonemes are
+  sung*, not *where notes start/end or what pitch they are*. Any sample that violates this is rejected,
+  never silently admitted or relabeled. This strengthens — does not replace — the absolute
+  score-tolerance checks (SC-002) with a relative check against the lyric-free baseline.
+- Q: How is the labeled onset defined once a note carries a leading consonant? → A: The **vowel
+  nucleus on the score beat** is the note. A leading consonant is articulated in a short pre-onset
+  window and is **not** the labeled onset; the validator's timing comparison targets the vowel onset
+  (with any method group delay subtracted, 001 FR-019). A net residual shift the system cannot
+  compensate causes rejection, not relabeling.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Sing supplied lyrics with the label safety net intact (Priority: P1)
@@ -59,6 +77,11 @@ is rejected with the deviation logged — never silently admitted.
    re-derived within tolerance), with the deviation recorded in provenance — never silently relabeled.
 3. **Given** a score with **no** lyrics, **When** any lane renders it, **Then** behavior and output
    are byte-identical to the pre-feature pipeline (open-vowel render, three-column score).
+4. **Given** the same (score, voice, seed) rendered once **with** lyrics and once **without** (the
+   open-vowel baseline), **When** both are measured, **Then** every accepted note's pitch matches the
+   baseline (no pitch shift attributable to lyrics) and every accepted note's onset/offset matches the
+   baseline within the validator's timing resolution (no timing shift attributable to lyrics); any
+   note that does not is rejected, not admitted.
 
 ---
 
@@ -169,6 +192,14 @@ pinned text (identical lyrics) without invoking the model again.
 - **Lyrics on a non-articulating lane**: Lyrics assigned to the deterministic vowel lane or carried
   through the timbre-only voice-conversion lane do not change their audio; only the expressive lane
   articulates them. This is recorded so the corpus is not assumed to contain consonants it does not.
+- **Net lead-in / latency from articulation**: A leading consonant, voicebank lead-in silence, or a
+  G2P/vocoder constant delay could shift the whole render in time. The labeled onset targets the vowel
+  nucleus on the score beat, and any constant method delay is subtracted (001 FR-019); a residual
+  per-note shift versus the lyric-free baseline that exceeds the timing resolution causes rejection,
+  never a silent relabel.
+- **Articulation perturbing pitch**: If a voicebank's phoneme model would bend the pitch of a note
+  (e.g. consonant-induced micro-pitch), the system must keep the note's pitch equal to the lyric-free
+  (score-derived) render; a note whose pitch deviates from that baseline is rejected.
 
 ## Requirements *(mandatory)*
 
@@ -215,6 +246,25 @@ pinned text (identical lyrics) without invoking the model again.
   unaffected.
 - **FR-014**: The system MUST report, in the run's aggregate statistics, the lyric-source breakdown
   and a phonetic-coverage summary, so an operator can confirm the corpus gained phonetic diversity.
+- **FR-015 (pitch neutrality)**: Adding lyrics MUST NOT alter a note's pitch. The sung fundamental
+  frequency MUST remain score-derived, so that for the same (score, voice, seed) each accepted note's
+  measured pitch equals that of the lyric-free (open-vowel) render of the same input within the
+  validator's pitch tolerance (±25 cents over ≥80% of the sustained interval). A note whose pitch
+  deviates from that baseline because of articulation MUST be rejected, never admitted or relabeled.
+- **FR-016 (timing neutrality)**: Adding lyrics MUST NOT move a note's labeled onset or offset. For the
+  same (score, voice, seed), each accepted note's measured onset/offset MUST match the lyric-free
+  render of the same input within the validator's timing resolution (≤10 ms), in addition to staying
+  within the absolute score tolerance (FR-007). The labeled onset is the vowel nucleus on the score
+  beat; a leading consonant is articulated in a pre-onset window and is not the labeled onset. A note
+  that cannot meet this relative bound MUST be rejected.
+- **FR-017**: The system MUST compensate any constant, documented method delay introduced by the
+  articulation path (G2P/voicebank/vocoder lead-in) by subtracting it before the validator compares
+  onsets/offsets (consistent with 001 FR-019). Only non-constant residual shift counts against
+  FR-016; unknown delays are measured once, not guessed.
+- **FR-018**: The evaluation harness MUST verify FR-015 and FR-016 as a differential check — rendering
+  a fixture set both with and without lyrics for the same seeds and asserting the per-note pitch and
+  onset/offset deltas between the two are within the tolerances above — so "no shift from adding vocal
+  synthesis" is a gated, reproducible verdict rather than a claim.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -249,6 +299,15 @@ pinned text (identical lyrics) without invoking the model again.
 - **SC-007**: For generated-lyric runs, the corpus regenerates from the manifest using the pinned
   lyric text with zero re-invocations of the lyric model, and the regenerated samples meet 001's
   per-lane reproducibility tolerance.
+- **SC-008 (no pitch shift)**: In a differential test rendering the same fixture set with and without
+  lyrics for identical seeds, at least 99% of accepted lyric notes have a measured pitch within ±25
+  cents (over ≥80% of the sustained interval) of the lyric-free render of the same note; notes
+  exceeding this are rejected, so zero pitch shift attributable to lyrics reaches the accepted corpus.
+- **SC-009 (no timing shift)**: In the same differential test, at least 99% of accepted lyric notes
+  have a measured onset and offset within 10 ms of the lyric-free render of the same note (after
+  constant-delay compensation), and 100% of accepted notes additionally stay within the absolute score
+  tolerance; notes exceeding the relative bound are rejected, so zero timing shift attributable to
+  lyrics reaches the accepted corpus.
 
 ## Assumptions
 
@@ -269,3 +328,11 @@ pinned text (identical lyrics) without invoking the model again.
   reproducibility machinery.
 - The generated (model-based) source is the lowest-priority, fully droppable slice; the feature
   delivers its core value (phonetic diversity) through the supplied and automatic sources alone.
+- Pitch neutrality (FR-015) holds **by construction** in the force-score-F0 mode, where the sung f0 is
+  the score's f0 regardless of phoneme content; the differential check (FR-018, SC-008) guards against
+  a backend that ignores that contract. Timing neutrality (FR-016) is the load-bearing new guarantee,
+  since articulation is where time can actually drift; it is enforced relative to the lyric-free
+  baseline and gated by rejection.
+- "No shift from adding vocal synthesis" is interpreted as a **relative (lyric-on vs lyric-off)**
+  guarantee for the same seed, layered on top of the existing absolute score-tolerance checks — not as
+  a claim that the open-vowel baseline itself is shift-free (that is 001's responsibility).

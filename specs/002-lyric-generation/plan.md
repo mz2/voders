@@ -59,8 +59,11 @@ MUST NOT regress 001's deterministic-lane throughput target (≥100 score-singer
 hot path.
 **Constraints**: Audio stays 22,050 Hz mono float32. Lyric-free runs MUST be byte-identical to the
 pre-feature pipeline (SC-001). Lyric-driven SVS samples MUST meet the same onset (50 ms) / offset
-(max(50 ms, 20%)) tolerances or be rejected (SC-002). Automatic-source lyrics MUST be seed-reproducible
-independent of worker count (SC-004).
+(max(50 ms, 20%)) tolerances or be rejected (SC-002). **Adding lyrics MUST NOT shift pitch or timing
+relative to the lyric-free render of the same (score, voice, seed)** — pitch within ±25 cents
+(neutral by construction in force-score-F0 mode), onset/offset within 10 ms after constant-delay
+compensation, else reject (FR-015/FR-016/FR-017, SC-008/SC-009). Automatic-source lyrics MUST be
+seed-reproducible independent of worker count (SC-004).
 **Scale/Scope**: Same 10k–100k samples/run as 001; the lyric layer adds one per-note string and one
 per-sample provenance axis.
 
@@ -79,10 +82,14 @@ per-sample provenance axis.
   - identical assigned syllables across a 1-worker vs N-worker re-run (SC-004),
   - zero dropped/added/shifted note labels across all count mismatches (SC-005),
   - every record carries `lyric_source` + `lyric_hash`; zero license-refused lyric models (SC-006),
-  - generated-lyric run replays from the pinned artifact with zero model re-invocations (SC-007).
+  - generated-lyric run replays from the pinned artifact with zero model re-invocations (SC-007),
+  - **differential no-shift check (SC-008/SC-009, FR-018):** render the fixture set once with lyrics
+    and once lyric-free for the *same seeds*, then assert each accepted note's pitch is within ±25
+    cents and its onset/offset within 10 ms of the lyric-free baseline (after constant-delay
+    compensation); a note exceeding either bound must be rejected, not admitted.
 - **Fixture:** the 001 fixture scores, plus (a) one 3-column lyric-free score, (b) one 4-column
-  supplied-lyric score, and (c) a tiny CV inventory — all small text, Git-LFS unaffected (no new
-  binaries).
+  supplied-lyric score, (c) a tiny CV inventory, and (d) a paired lyric-on/lyric-off config sharing a
+  seed for the differential check — all small text, Git-LFS unaffected (no new binaries).
 
 ## Constitution Check
 
