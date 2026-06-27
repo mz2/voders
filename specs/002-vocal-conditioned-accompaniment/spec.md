@@ -26,6 +26,8 @@ acceptable — as long as the note *timing* does not move.
 - Q: How is the grid-imposition concern operationalized (FR-012 / SC-005)? → A: By direct measurement, not a perceptual beat classifier — the generated audio must not have shifted any original note in time; detected note onset/offset positions in the mix are compared to the original labels and must not have moved.
 - Q: Per source vocal, how many accompaniment-augmented samples enter the corpus? → A: One best take per (source vocal × target instrument/mode).
 - Q: Which vocals does the lane accept as input in v1? → A: Corpus-internal vocals only (from existing lanes); external user-supplied vocals are out of scope for v1.
+- Q: What audio does the alignment validator run on for admission? → A: The final vocal+accompaniment mix — sung notes must remain detectable through the accompaniment; a masked/undetectable vocal is rejected (so the validator must track the voice within a mix, not only a solo vocal).
+- Q: What does the corpus store per accompaniment-augmented sample? → A: The final mix plus the separately generated accompaniment stem (and, in vocal-preserving mode, a reference to the unchanged source vocal), enabling label-safe re-mixing.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -156,6 +158,9 @@ their outputs not admitted.
   mode. The lane no-ops gracefully and the run continues with the remaining lanes, logging the skip.
 - **Out-of-range duration**: vocals longer or shorter than the model can condition on in a single pass are
   handled (segmented or skipped with a recorded reason) rather than producing mistimed output.
+- **Vocal masked by accompaniment**: the accompaniment is loud or dense enough that the sung notes are no
+  longer detectable in the final mix. Because admission validates the mix, the sample fails note detection and
+  is rejected with a recorded reason rather than admitted with unusable labels.
 
 ## Requirements *(mandatory)*
 
@@ -170,9 +175,12 @@ their outputs not admitted.
   combined vocal+instrument mix whose labeled note onsets/offsets remain within the project's existing
   alignment tolerance (onset ≤ 50 ms; offset ≤ max(50 ms, 20% of note length)), while permitting mild vocal
   coloration.
-- **FR-004**: The system MUST validate every accompaniment-augmented sample with the existing alignment
-  validator and admit only samples whose note onsets/offsets remain within tolerance; failing samples MUST be
-  routed to the rejected tree with a recorded reason.
+- **FR-004**: The system MUST validate every accompaniment-augmented sample **on the final
+  vocal+accompaniment mix** and admit only samples whose sung-note onsets/offsets remain within tolerance AND
+  whose notes remain detectable through the accompaniment; a sample whose vocal is masked/undetectable in the
+  mix MUST be rejected. Failing samples MUST be routed to the rejected tree with a recorded reason.
+  (Validating the mix requires the validator to track the sung voice within accompaniment, not only a solo
+  vocal.)
 - **FR-005**: The system MUST support a free-time/rubato configuration that requires no fixed tempo (no BPM)
   and biases generation toward sustained/textural accompaniment, and MUST NOT require tempo metadata for such
   samples.
@@ -207,6 +215,10 @@ their outputs not admitted.
   gracefully and the run MUST continue with remaining lanes, logging the skip.
 - **FR-014**: Accompaniment generation MUST stream and checkpoint within the project's existing run envelope
   so enabling the lane does not break large-run (10k–100k sample) execution.
+- **FR-015**: For each admitted sample the corpus MUST store the final mix **and** the separately generated
+  accompaniment stem; in vocal-preserving mode it MUST also retain a reference to the unchanged source vocal.
+  These retained stems MUST be sufficient to re-mix the sample at a different vocal/accompaniment balance
+  without regenerating.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -214,9 +226,11 @@ their outputs not admitted.
   and, in vocal-preserving mode, the retained untouched track.
 - **Accompaniment Model**: an open-weight generator identity — version, license, the conditioning modes it
   supports (vocal-preserving stem / one-pass mix), and its input-format requirements.
-- **Accompaniment-Augmented Sample**: the produced mixed audio with conditioning mode, vocal-bit-exact flag,
-  seed(s), validation verdict, per-note timing shift (detected vs original labels), takes-tried count,
-  free-time/instrument configuration, and a link back to the source vocal sample.
+- **Accompaniment-Augmented Sample**: the produced sample with conditioning mode, vocal-bit-exact flag,
+  seed(s), validation verdict (measured on the mix), per-note timing shift (detected vs original labels),
+  takes-tried count, free-time/instrument configuration, and a link back to the source vocal sample. Stored
+  artifacts are the final mix **and** the separate accompaniment stem (plus the retained source vocal in
+  vocal-preserving mode).
 - **Generation Config**: mode selection, target instrument class/descriptors, free-time flag, license policy,
   takes-per-sample, and seed-derivation settings for a run.
 - **Validation Verdict**: per-sample onset/offset deviations from the original labels, pass/fail, and any
@@ -244,6 +258,9 @@ their outputs not admitted.
   project's reproducibility tolerance.
 - **SC-007**: With the lane enabled, a run still completes a 10k–100k sample corpus by streaming/checkpointing
   without exhausting memory (no regression to the existing run envelope).
+- **SC-008**: 100% of admitted samples store both the final mix and the accompaniment stem (plus a
+  source-vocal reference in vocal-preserving mode), so any admitted sample can be re-mixed at a different
+  vocal/accompaniment balance without regeneration.
 
 ## Assumptions
 
@@ -273,5 +290,8 @@ their outputs not admitted.
 
 - Requires the existing **alignment validator**, **JSON Lines manifest writer**, **master-seed derivation**,
   and **corpus sharding (accepted vs rejected trees)** from the `001-synthetic-singing-corpus` pipeline.
+- The alignment validator must operate on **voice-in-a-mix** (detect the sung notes through accompaniment),
+  which may require a mix-robust f0 tracker or source separation; the existing solo-vocal validator is
+  extended/configured for this rather than assumed sufficient as-is.
 - Requires at least one **open-weight, vocal-conditioned music-generation model** that supports a
   vocal-preserving stem mode and/or a one-pass full-mix mode (concrete selection deferred to planning).
