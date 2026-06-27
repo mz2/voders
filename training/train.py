@@ -519,33 +519,46 @@ def main():
 
     base_dir = args.checkpoint_dir if args.checkpoint_dir else args.output_dir
 
+    # W&B is optional and gated purely on WANDB_API_KEY: with a key present we log
+    # online to Weights & Biases; without one we fall back to local TensorBoard
+    # logging so the run never blocks on an interactive login prompt.
+    logger = None
+    using_wandb = False
     if args.logger == "wandb":
-        try:
-            from pytorch_lightning.loggers import WandbLogger
-        except ImportError as exc:
-            raise ImportError(
-                "WandB logger requested but not available. Install wandb with: pip install wandb"
-            ) from exc
+        if not os.environ.get("WANDB_API_KEY"):
+            print(
+                "W&B: WANDB_API_KEY not set — using TensorBoard logging instead "
+                "(set WANDB_API_KEY to log to Weights & Biases)."
+            )
+        else:
+            try:
+                from pytorch_lightning.loggers import WandbLogger
+            except ImportError as exc:
+                raise ImportError(
+                    "WandB logger requested but not available. Install wandb with: pip install wandb"
+                ) from exc
+            try:
+                wandb_tags = [] if args.wandb_tags is None else list(args.wandb_tags)
+                logger = WandbLogger(
+                    project=args.wandb_project,
+                    entity=args.wandb_entity,
+                    name=args.wandb_name or args.experiment_name,
+                    tags=wandb_tags + [gethostname()],
+                    save_dir=base_dir,
+                    mode=args.wandb_mode,
+                    log_model=False,
+                )
+                config_dict = {
+                    k: v for k, v in vars(args).items()
+                    if isinstance(v, (int, float, str, bool, type(None)))
+                }
+                logger.experiment.config.update(config_dict, allow_val_change=True)
+                using_wandb = True
+            except Exception as e:
+                print(f"Warning: W&B logging unavailable ({e}); falling back to TensorBoard.")
+                logger = None
 
-        wandb_tags = [] if args.wandb_tags is None else list(args.wandb_tags)
-        logger = WandbLogger(
-            project=args.wandb_project,
-            entity=args.wandb_entity,
-            name=args.wandb_name or args.experiment_name,
-            tags=wandb_tags + [gethostname()],
-            save_dir=base_dir,
-            mode=args.wandb_mode,
-            log_model=False,
-        )
-        try:
-            config_dict = {
-                k: v for k, v in vars(args).items()
-                if isinstance(v, (int, float, str, bool, type(None)))
-            }
-            logger.experiment.config.update(config_dict, allow_val_change=True)
-        except Exception as e:
-            print(f"Warning: Could not update WandB config: {e}")
-    else:
+    if logger is None:
         try:
             from pytorch_lightning.loggers import TensorBoardLogger
         except ImportError as exc:
@@ -561,8 +574,8 @@ def main():
     output_dir = Path(base_dir) / args.experiment_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.logger == "wandb":
-        checkpoint_dir = output_dir / logger.version / "checkpoints"
+    if using_wandb and logger.version is not None:
+        checkpoint_dir = output_dir / str(logger.version) / "checkpoints"
     elif hasattr(logger, "log_dir") and logger.log_dir is not None:
         checkpoint_dir = Path(logger.log_dir) / "checkpoints"
     else:
@@ -572,7 +585,13 @@ def main():
     monitor_metric = f"eval/{args.eval_metric}"
     checkpoint_callback = ModelCheckpoint(
         dirpath=checkpoint_dir,
-        filename="best-{global_step:08d}_{eval_COnP_f1:.4f}",
+        # Built-in {epoch}/{step} tokens only: the monitored metric name contains a
+        # "/" which would leak into the path as a subdirectory, and the previous
+        # template referenced non-existent keys (global_step / eval_COnP_f1) that
+        # always rendered as 0. The best score is preserved in the checkpoint's
+        # best_model_score and in the logger.
+        filename="best-epoch{epoch:02d}-step{step:06d}",
+        auto_insert_metric_name=False,
         monitor=monitor_metric,
         mode="max",
         save_top_k=1,
@@ -675,7 +694,7 @@ def main():
         metrics = {}
         for key, value in trainer.callback_metrics.items():
             metrics[key] = value.item() if hasattr(value, "item") else value
-        if args.logger == "wandb":
+        if using_wandb:
             logger.log_hyperparams(vars(args))
         else:
             logger.log_hyperparams(vars(args), metrics)

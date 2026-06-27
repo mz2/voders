@@ -221,6 +221,10 @@ __marimo__/
 # Only fixtures (LFS), the resolved config, manifest, and stats are version-controlled.
 /out/
 
+# Training run outputs (checkpoints, TensorBoard events, local wandb runs) from
+# `just train` / train_soulx.sh (--output-dir BASIC_PITCH_CHALLENGE).
+/BASIC_PITCH_CHALLENGE/
+
 # voders: downloaded model weights are never committed (large, consent-gated assets).
 # Exception: the small CC0/permissive Freesound donor vowels are versioned via LFS so the
 # data-augmentation pipeline has reproducible source material (see ATTRIBUTION.txt).
