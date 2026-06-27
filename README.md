@@ -136,6 +136,15 @@ flowchart LR
 and **VCTK** (both CC BY 4.0) into git-ignored `models/donors/`; `just demo-real-donor` renders the
 deterministic lane with a real human vowel instead of the synthetic fixture.
 
+**Record your own donor vowel.** `just record-donor <voice-id> FILE=take.wav` imports an existing
+WAV, or `just record-donor <voice-id> RECORD=1` captures a sustained vowel from the microphone (the
+`record` extra pulls in `sounddevice`). Either way it isolates the steady portion, normalizes,
+resamples to 22,050 Hz mono float32, validates the take (voiced, low noise), prompts for your
+consent, writes the WAV under git-ignored `models/donors/`, and prints a ready-to-paste `Voice`
+entry (`kind: deterministic_donor`, `consent_verified: true`). Because you record and consent
+yourself, the consent gate (FR-011, SC-008) is satisfied by construction — one ~3 s vowel is enough
+for the WORLD/RVC base render. Paste the printed entry under `voices:` in your run config.
+
 **Zero-shot voice conversion (modern, no per-voice training).** `just demo-seedvc` runs **Seed-VC**
 (diffusion zero-shot VC) out-of-process (`backends/seedvc`, Python 3.10): the target voice is just a
 reference clip (a consented donor), no `.pth`. It keeps the source pitch (`--f0-condition`), so the

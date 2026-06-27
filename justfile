@@ -89,6 +89,17 @@ download-donors:
     uv sync --extra cpu --extra donors
     uv run --extra cpu --extra donors python evals/download_donors.py
 
+# Fetch CC0/CC-BY donor vowels from Freesound (needs FREESOUND_API_TOKEN). QUERY=/COUNT=/LICENSE= optional.
+download-freesound QUERY="sustained sung vowel" COUNT="3" LICENSE="cc0": setup
+    uv run --extra cpu python evals/download_freesound.py \
+        --query {{quote(QUERY)}} --count {{COUNT}} --license {{LICENSE}}
+
+# Enroll your own consented donor vowel. Import a WAV (FILE=...) or record from the mic (RECORD=1).
+record-donor VOICE_ID FILE="" RECORD="": setup
+    uv run --extra cpu {{ if RECORD != "" { "--extra record" } else { "" } }} \
+        python evals/record_donor.py --voice-id {{VOICE_ID}} \
+        {{ if RECORD != "" { "--record" } else { "--input " + FILE } }}
+
 # Render the deterministic lane with a real VocalSet donor voice, then evaluate.
 demo-real-donor: download-donors
     uv run voders run --config evals/fixtures/real_donor.yaml
