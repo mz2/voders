@@ -19,8 +19,8 @@ def _manifest(tmp_path: Path) -> Path:
                 ProvenanceRecord(
                     sample_id=sid,
                     score_id=f"s{i}",
-                    score_path=f"corpus/shard=000/{sid}.tsv",
-                    audio_path=f"corpus/shard=000/{sid}.wav",
+                    score_path=f"corpus/shard=000/{sid}/score.tsv",
+                    audio_path=f"corpus/shard=000/{sid}/audio.wav",
                     lane=lane,
                     voice_id=voice,
                     seed=1,
@@ -33,8 +33,8 @@ def _manifest(tmp_path: Path) -> Path:
         ProvenanceRecord(
             sample_id="bad",
             score_id="s9",
-            score_path="rejected/shard=000/bad.tsv",
-            audio_path="rejected/shard=000/bad.wav",
+            score_path="rejected/shard=000/bad/score.tsv",
+            audio_path="rejected/shard=000/bad/audio.wav",
             lane="svs",
             voice_id="x",
             seed=1,
