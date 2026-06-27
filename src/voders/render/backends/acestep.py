@@ -118,9 +118,11 @@ class _AceStepGenerator:
         from voders.render.backend_bridge import backends_root
 
         proj = backends_root() / _BACKEND_NAME
-        # "Complete" holds the vocal in place (lower edit strength); "Lego" drifts further since
-        # only its non-vocal stems are kept downstream after source separation.
-        strength = 0.55 if self.mode == MODE_COMPLETE else 0.75
+        # ACE-Step: sigma_max = 1 - ref_audio_strength, so HIGHER strength starts from less noise
+        # and hugs the reference vocal; LOWER strength generates more independent content. Complete
+        # holds the vocal in place (high strength); Lego wants distinct instruments (low strength)
+        # since only its non-vocal stems are kept after source separation.
+        strength = 0.7 if self.mode == MODE_COMPLETE else 0.25
         with tempfile.TemporaryDirectory(prefix="acestep_") as tmp:
             ref_path = os.path.join(tmp, "ref.wav")
             out_path = os.path.join(tmp, "out.wav")

@@ -24,11 +24,11 @@ lanes:
     backend: acestep                 # out-of-process backends/acestep (Python 3.12, Apache-2.0)
     model_id: ace-step-v1-3.5b
     license_policy: [MIT, Apache-2.0, CC-BY-4.0]
-    target_instrument: "sustained bowed metal pad"
+    target_instrument: "deep upright bass and soft brushed drums, warm low chords"
     free_time: true
     bpm: null
     takes: 2                          # pick the best-aligned of two takes
-    target_snr_db: [18, 24]           # keep the pad well under the vocal so on-mix onsets stay clean
+    target_snr_db: [3, 6]             # accompaniment clearly audible, vocal still dominant
 
 validator:
   onset_ms: 50

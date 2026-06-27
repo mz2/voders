@@ -180,12 +180,16 @@ class Accompanist:
         for take in range(self.options.takes):
             seed = derive_seed(base_seed, "take", take)
             mix, stem, snr = self._one_take(vocal, score, seed)
+            # Lego: the vocal is byte-identical, so measure the note shift on the *untouched vocal*
+            # (its true, unmoved timing), not the polyphonic mix where accompaniment energy would
+            # corrupt the measurement. Masking is still judged on the mix (f0 coverage + SNR).
             mv = validate_on_mix(
                 mix,
                 score,
                 self.validator,
                 snr_db=snr,
                 vocal_preserving=vocal_preserving,
+                vocal_estimate=vocal if vocal_preserving else None,
                 timing=self.timing,
             )
             verdict, shift = mv.verdict, mv.max_note_shift_ms
