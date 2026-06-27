@@ -260,6 +260,13 @@ def main():
         help="Device for crepe_f0 validation (auto | cuda | xpu | dml | cpu)",
     )
     augment_group.add_argument(
+        "--augment-f0-model",
+        type=str,
+        default="tiny",
+        choices=["tiny", "full"],
+        help="CREPE capacity for validation: tiny (~5-10x faster, for gating) | full (accurate)",
+    )
+    augment_group.add_argument(
         "--augment-max-retries",
         type=int,
         default=4,
@@ -529,6 +536,7 @@ def main():
             validate=args.augment_validate,
             f0_method=args.augment_f0_method,
             f0_device=args.augment_f0_device,
+            f0_model=args.augment_f0_model,
             pitch_shift_semitones=args.augment_pitch_shift_semitones,
             time_stretch_amount=args.augment_time_stretch,
             max_retries=args.augment_max_retries,

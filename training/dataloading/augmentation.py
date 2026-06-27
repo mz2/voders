@@ -88,6 +88,7 @@ class DynamicAugmentor:
         validate: bool = True,
         f0_method: str = "crepe_f0",
         f0_device: str = "auto",
+        f0_model: str = "tiny",
         pitch_shift_semitones: float = 0.0,
         time_stretch_amount: float = 0.0,
         max_retries: int = 4,
@@ -121,6 +122,7 @@ class DynamicAugmentor:
         # validation — never inherited across a fork (that is the fork-after-CUDA deadlock).
         self.f0_method = f0_method
         self.f0_device = f0_device
+        self.f0_model = f0_model
         self._rng: np.random.Generator | None = None
         self._validator = None
 
@@ -159,7 +161,11 @@ class DynamicAugmentor:
             # offset time axis is derived from sr. (16 kHz is also CREPE's native rate, so
             # crepe_f0 does no internal resample.)
             self._validator = Validator(
-                ValidatorConfig(f0_method=self.f0_method, f0_device=self.f0_device),
+                ValidatorConfig(
+                    f0_method=self.f0_method,
+                    f0_device=self.f0_device,
+                    f0_model=self.f0_model,
+                ),
                 sr=self.sr,
             )
         return self._validator

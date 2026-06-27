@@ -33,6 +33,7 @@ class ValidatorConfig(BaseModel):
     snr_floor_db: float = 0.0
     f0_method: str = "pyin_f0"  # pyin_f0 (CPU) | crepe_f0 (GPU) | auto
     f0_device: str = "auto"  # auto (cuda->xpu->dml->cpu) | cuda | xpu | dml | cpu (for crepe_f0)
+    f0_model: str = "full"  # CREPE capacity: full (accurate) | tiny (~5-10x faster, for gating)
 
 
 class NeuralReproduction(BaseModel):
