@@ -71,7 +71,7 @@ build-pool: setup
 # present), unifies them into one pool, renders the deterministic lane, fans each accepted render
 # through the augmentation profiles, then audits + evaluates + aggregates. FETCH=0 skips the network
 # fetches and runs purely on the checked-in donors (this is what the CI action uses).
-augment FETCH="1" FREESOUND_COUNT="5" VOCALSET_SINGERS="20" pool="evals/fixtures/donor_pool.yaml" manifest="out/donor_pool/manifest.jsonl": fixtures
+augment FETCH="1" FREESOUND_COUNT="5" VOCALSET_SINGERS="18" pool="evals/fixtures/donor_pool.yaml" manifest="out/donor_pool/manifest.jsonl": fixtures
     {{ if FETCH == "1" { "-uv run --extra cpu --extra donors python evals/download_donors.py --vocalset-singers " + VOCALSET_SINGERS } else { "echo 'FETCH=0: using checked-in donors (no dataset download)'" } }}
     {{ if FETCH == "1" { "-uv run --extra cpu python evals/download_freesound.py --count " + FREESOUND_COUNT + " --license cc0" } else { "echo 'FETCH=0: using checked-in Freesound donors (no download)'" } }}
     rm -rf out/donor_pool
@@ -85,7 +85,7 @@ augment FETCH="1" FREESOUND_COUNT="5" VOCALSET_SINGERS="20" pool="evals/fixtures
 # Like `augment`, but ALSO lays vocal-conditioned accompaniment (spec 002) under each accepted donor
 # render — including the real VocalSet singer — as a training augmentation. BACKEND=fake is CPU/CI;
 # BACKEND=acestep uses the real GPU model (run `just setup-acestep-backend` first).
-augment-accomp BACKEND="fake" FETCH="1" FREESOUND_COUNT="5" VOCALSET_SINGERS="20" pool="evals/fixtures/donor_pool_accomp.yaml" manifest="out/donor_pool_accomp/manifest.jsonl": fixtures setup-accomp
+augment-accomp BACKEND="fake" FETCH="1" FREESOUND_COUNT="5" VOCALSET_SINGERS="18" pool="evals/fixtures/donor_pool_accomp.yaml" manifest="out/donor_pool_accomp/manifest.jsonl": fixtures setup-accomp
     {{ if FETCH == "1" { "-uv run --extra cpu --extra donors python evals/download_donors.py --vocalset-singers " + VOCALSET_SINGERS } else { "echo 'FETCH=0: using checked-in donors (no dataset download)'" } }}
     {{ if FETCH == "1" { "-uv run --extra cpu python evals/download_freesound.py --count " + FREESOUND_COUNT + " --license cc0" } else { "echo 'FETCH=0: using checked-in Freesound donors (no download)'" } }}
     rm -rf out/donor_pool_accomp
