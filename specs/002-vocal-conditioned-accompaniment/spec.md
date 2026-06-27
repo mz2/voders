@@ -28,6 +28,7 @@ acceptable — as long as the note *timing* does not move.
 - Q: Which vocals does the lane accept as input in v1? → A: Corpus-internal vocals only (from existing lanes); external user-supplied vocals are out of scope for v1.
 - Q: What audio does the alignment validator run on for admission? → A: The final vocal+accompaniment mix — sung notes must remain detectable through the accompaniment; a masked/undetectable vocal is rejected (so the validator must track the voice within a mix, not only a solo vocal).
 - Q: What does the corpus store per accompaniment-augmented sample? → A: The final mix plus the separately generated accompaniment stem (and, in vocal-preserving mode, a reference to the unchanged source vocal), enabling label-safe re-mixing.
+- Q: Does stem retention / re-mixability (FR-015, SC-008) apply to Complete (one-pass) mode, which emits a single fused mix with no separable stem? → A: No — re-mixability is a **Lego-mode guarantee**. Complete stores the mix only and records `stem_available = false`; the spec is scoped accordingly rather than forcing a lossy source-separation pass on Complete output.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -215,10 +216,12 @@ their outputs not admitted.
   gracefully and the run MUST continue with remaining lanes, logging the skip.
 - **FR-014**: Accompaniment generation MUST stream and checkpoint within the project's existing run envelope
   so enabling the lane does not break large-run (10k–100k sample) execution.
-- **FR-015**: For each admitted sample the corpus MUST store the final mix **and** the separately generated
-  accompaniment stem; in vocal-preserving mode it MUST also retain a reference to the unchanged source vocal.
-  These retained stems MUST be sufficient to re-mix the sample at a different vocal/accompaniment balance
-  without regenerating.
+- **FR-015**: For each admitted sample the corpus MUST store the final mix. **In vocal-preserving (Lego)
+  mode** it MUST additionally store the separately generated accompaniment stem and a reference to the
+  unchanged source vocal, and these MUST be sufficient to re-mix the sample at a different
+  vocal/accompaniment balance without regenerating. **One-pass (Complete) mode emits a single fused mix with
+  no separable accompaniment stem**, so stem retention / re-mixability do not apply; such samples record
+  `stem_available = false`. (Re-mixability is therefore a Lego-mode guarantee — see SC-008.)
 
 ### Key Entities *(include if feature involves data)*
 
@@ -258,9 +261,10 @@ their outputs not admitted.
   project's reproducibility tolerance.
 - **SC-007**: With the lane enabled, a run still completes a 10k–100k sample corpus by streaming/checkpointing
   without exhausting memory (no regression to the existing run envelope).
-- **SC-008**: 100% of admitted samples store both the final mix and the accompaniment stem (plus a
-  source-vocal reference in vocal-preserving mode), so any admitted sample can be re-mixed at a different
-  vocal/accompaniment balance without regeneration.
+- **SC-008**: 100% of admitted **Lego (vocal-preserving)** samples store both the final mix and the
+  separate accompaniment stem (plus a source-vocal reference), so they can be re-mixed at a different
+  vocal/accompaniment balance without regeneration. Complete (one-pass) samples store the mix only and record
+  `stem_available = false` (re-mixability does not apply — see FR-015).
 
 ## Assumptions
 

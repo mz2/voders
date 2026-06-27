@@ -190,8 +190,9 @@ standing it up: ACE-Step's `cutlet→mojimoji` and `spacy==3.8.4` pins need sour
 (use a modern `spacy` + skip `cutlet`, which is import-lazy); and torchaudio 2.11 routes I/O through
 `torchcodec`/FFmpeg, so the runner monkeypatches `torchaudio.load/save` onto `soundfile`.
 
-### Remaining design note (not a blocker)
+### Resolved: Complete-mode stem scope
 
 **Complete** emits a fused mix with no separable stem, so FR-015 stem retention / SC-008
-re-mixability are **Lego-mode properties** — Complete samples set `stem_available=false`
-(implemented). Revisit only if strict Complete-stem retention is required.
+re-mixability are **Lego-mode guarantees** — Complete samples set `stem_available=false`. The spec
+owner confirmed this scope (2026-06-27): FR-015 / SC-008 are reworded to apply to Lego, and the
+lossy source-separation fallback on Complete output is intentionally not applied.

@@ -71,7 +71,7 @@ explicitly). Present iff `lane == "accompaniment"` (contract:
 | `max_note_shift_ms` | float | measured note displacement (FR-012 / SC-005) |
 | `free_time` | bool | FR-005 |
 | `target_instrument` | str | FR-005 |
-| `stem_available` | bool | `true` Lego, `false` Complete (SC-008 scope — research.md open item 2) |
+| `stem_available` | bool | `true` Lego, `false` Complete; SC-008 re-mixability is Lego-scoped (resolved) |
 
 `ValidationVerdict` is reused as-is; `max_onset_dev_ms` already carries onset deviation, and
 `snr_db` already carries the vocal-to-accompaniment ratio. `max_note_shift_ms` lives on the
@@ -112,11 +112,12 @@ no-ops for the run with a logged skip (FR-006/FR-013), nothing admitted.
 
 ---
 
-## Design note surfaced to the spec owner
+## Design note — resolved (2026-06-27)
 
 FR-015 / SC-008 require storing "the separately generated accompaniment stem". In **Complete**
 (one-pass) mode the model emits a single fused mix with **no separable stem**, so those clauses are
-satisfiable only for **Lego** mode; Complete samples set `stem_available=false`. If strict
-stem-retention for Complete is required, the fallback is to run the source separator (Decision 2) to
-extract an *estimated* accompaniment stem — lossy and extra cost. Recommend treating re-mixability as
-a Lego-mode guarantee; confirm before `/speckit-tasks`.
+satisfiable only for **Lego** mode. **Resolution (spec owner): re-mixability is a Lego-mode
+guarantee.** Complete samples store the mix only and record `stem_available = false`; FR-015 and SC-008
+are scoped to Lego accordingly (see the spec Clarifications). The lossy source-separation fallback on
+Complete output (Decision 2) is intentionally *not* applied. The eval (`acc_sc008_stems`) gates SC-008
+over Lego samples only, matching this scope.

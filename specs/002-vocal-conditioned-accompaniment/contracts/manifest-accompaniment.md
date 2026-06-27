@@ -43,8 +43,8 @@ FR-006a. `ProvenanceRecord` is `extra="forbid"`, so this is an explicit typed ad
 - `attribution_text` MUST be non-null for CC-BY-class models and is surfaced by `voders audit`
   (FR-006a, SC-004).
 - `max_note_shift_ms` ≤ validator tolerance for any admitted sample; target 0 (SC-005).
-- `stem_available = (mode == "lego")` until research open-item 2 is resolved; gates SC-008
-  re-mixability to Lego samples (see data-model.md design note).
+- `stem_available = (mode == "lego")`; SC-008 re-mixability is a Lego-mode guarantee (resolved —
+  Complete stores the mix only). See the spec Clarifications + data-model.md design note.
 - `source_vocal_sample_id` MUST reference an existing accepted base render (FR-015).
 
 The existing `audit` / `stats` / `eval` CLI commands read these fields; no new subcommand is added
