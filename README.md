@@ -84,6 +84,31 @@ just splits                            # source-stratified train/val splits (iss
 `wav`+`tsv` pairs), `rejected/` (non-accepted samples, never trained on), and `checkpoints/`. The
 `out/` tree is git-ignored — generated corpora are never committed.
 
+## Consuming the corpus (for training)
+
+If you're training a transcription model on the output, here's what you need:
+
+**Layout.** Train on `corpus/` only — `corpus/**/*.wav` each has a sibling `.tsv` (the label,
+byte-identical to the driving score: `onset_s  offset_s  pitch_midi`). `rejected/` holds samples the
+validator gated out; never train on it. Audio is 22,050 Hz mono float32.
+
+**Provenance.** `manifest.jsonl` is one JSON row per attempted sample with its `sample_id`,
+`lane`, `voice_id`, `augmentation_profile`, `seed`, license/consent, and the `verdict`. `stats.json`
+summarises totals, unique scores/voices, timbre identities, and pitch/duration distributions.
+
+**Splits.** `just splits` (`voders splits`) writes `splits.json` with train/val lists
+**stratified by source** (lane/voice/augmentation profile) and deterministic in `--seed`, so every
+generator is represented on both sides and you can attribute errors to specific sources.
+
+**Quality — what to expect.** The validator gates every sample on onset (50 ms), offset, and f0
+(±25 cents over ≥80% of each note), so labels are correct by construction. Against the actual
+downstream model, `just basic-pitch-eval` runs **Basic Pitch** on the rendered audio and scores
+note-F1 (COnP: onset 50 ms, pitch 50 cents) vs the labels, broken down by verdict status and by
+source. Measured on the fixtures (small n — directional, re-run at scale): accepted lanes **0.80–1.00**
+(NNSVS 1.0, synthetic donor 0.94, VocalSet donor 0.87, RVC 0.80); rejected samples **~0.48–0.57**.
+So the gate is a genuine quality filter; the ±25-cent threshold is calibrated against the consumer
+(see `research.md` Decision 9). Use `basic-pitch-eval`'s per-source breakdown to spot weak generators.
+
 ## Running tests / development
 
 ```bash
