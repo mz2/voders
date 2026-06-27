@@ -51,4 +51,9 @@ class ProvenanceRecord(BaseModel):
     consent_verified: bool = False
     config_hash: str
     verdict: ValidationVerdict
+    lyric_source: str = "vowel"
+    lyric_hash: str | None = None
+    lyric_model: str | None = None
+    lyric_model_license: str | None = None
+    lyric_articulated: bool = False
     notes: dict[str, object] = Field(default_factory=dict)

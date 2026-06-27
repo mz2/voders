@@ -7,8 +7,9 @@ written to ``config.resolved.yaml`` so a run replays from the manifest + source 
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from voders.lyrics.models import LyricModel, LyricSource
 from voders.voices.models import Voice
 
 
@@ -57,6 +58,38 @@ class AugmentationProfileConfig(BaseModel):
     params: dict[str, object] = Field(default_factory=dict)
 
 
+class LyricsConfig(BaseModel):
+    """Optional per-run lyric source selector and articulation settings (FR-013, data-model.md).
+
+    Defaults keep a run lyric-free and byte-identical to the pre-feature behaviour (SC-001): the
+    ``vowel`` source imports no lyric module. ``theme`` and ``model`` are valid only with the
+    ``generated`` source; ``melisma`` accepts only ``per_note`` in v1.
+    """
+
+    source: LyricSource = LyricSource.VOWEL
+    inventory: str = "en_cv"
+    g2p_backend: str = "espeak"
+    melisma: str = "per_note"
+    theme: str | None = None
+    model: LyricModel | None = None
+    cache_dir: str = "lyrics"
+
+    @model_validator(mode="after")
+    def _check_source_constraints(self) -> LyricsConfig:
+        has_generated_field = self.theme is not None or self.model is not None
+        if has_generated_field and self.source != LyricSource.GENERATED:
+            raise ValueError(
+                "lyrics.theme/model are only valid with source='generated' "
+                f"(got source={self.source.value!r})"
+            )
+        if self.melisma not in {"per_note"}:
+            raise ValueError(
+                f"lyrics.melisma={self.melisma!r} is not yet supported; "
+                "'sustain_ties' is reserved and v1 accepts only 'per_note'"
+            )
+        return self
+
+
 class RunConfig(BaseModel):
     """A single declarative run specification (FR-016)."""
 
@@ -71,6 +104,7 @@ class RunConfig(BaseModel):
     augmentation_profiles: list[AugmentationProfileConfig] = Field(default_factory=list)
     validator: ValidatorConfig = Field(default_factory=ValidatorConfig)
     reproduction: ReproductionConfig = Field(default_factory=ReproductionConfig)
+    lyrics: LyricsConfig = Field(default_factory=LyricsConfig)
 
     def enabled_lanes(self) -> list[str]:
         return [name for name, t in self.lanes.items() if t.enabled]
