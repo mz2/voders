@@ -142,6 +142,12 @@ reference clip (a consented donor), no `.pth`. It keeps the source pitch (`--f0-
 labels are preserved. Other modern methods in scope (research.md Decision 8): kNN-VC, BigVGAN/Vocos
 vocoders, DiffSinger/TCSinger SVS.
 
+**Neural vocoder (experimental).** The deterministic lane accepts `vocoder: vocos` to re-vocode the
+WORLD output through Vocos (`just demo-vocos`). Empirically the plain mel Vocos model is not
+f0-conditioned and detunes past the ±25-cent tolerance, so the alignment gate rejects it — the
+gate working as designed. The lesson recorded in the code: an **f0-conditioned** vocoder
+(BigVGAN-f0 / NSF) is the alignment-safe route to neural-vocoder realism.
+
 **Trained voice models need consented weights.** RVC needs a *trained voice model* for a specific
 singer (an RVC `.pth`) — large external assets, and exactly what the consent gate (FR-011, SC-008)
 governs, so the repo bundles none. `just download-rvc-models` fetches the RVC **base** models

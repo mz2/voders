@@ -108,6 +108,13 @@ demo-seedvc: setup setup-seedvc-backend download-donors
     uv run voders run --config evals/fixtures/seedvc.yaml
     uv run voders eval --manifest out/seedvc/manifest.jsonl
 
+# EXPERIMENTAL: deterministic lane re-vocoded through Vocos (needs the gpu extra).
+# Note: mel Vocos is not f0-conditioned, so the alignment gate currently rejects its output —
+# see src/voders/render/vocos_enhance.py. Kept as a runnable experiment, not a default.
+demo-vocos: setup-gpu
+    uv run --extra cpu --extra gpu voders run --config evals/fixtures/vocos.yaml
+    uv run --extra cpu --extra gpu voders eval --manifest out/vocos/manifest.jsonl
+
 # Render + validate with the CREPE neural f0 estimator on the GPU (needs the `gpu` extra).
 smoke-gpu: setup-gpu
     uv run --extra cpu --extra gpu python evals/make_fixtures.py
