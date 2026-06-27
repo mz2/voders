@@ -156,6 +156,48 @@ attribution is recorded in `ATTRIBUTION.txt`). Each fetched sound prints a ready
 entry. Run `just list-donors` to see everything fetched/enrolled under `models/donors/` with its
 license and attribution.
 
+### Unified data-augmentation pipeline
+
+The donor enrollment methods above are the *data sources*; `just augment` runs them all into one
+augmented corpus. It is what the `data-augmentation` GitHub Action runs (manual dispatch or on a
+published release).
+
+```bash
+just augment                 # all sources -> unified pool -> render -> augment -> audit -> eval -> stats
+just augment FREESOUND_COUNT=10   # fetch more Freesound donors this run
+just build-pool              # only (re)generate the pool config from donors on disk
+just train                   # stub: trains on the augmented corpus manifest (wire in a real trainer)
+```
+
+**Every data source is used.** `augment` enrolls donors from all four methods —
+synthetic fixtures (`evals/fixtures/voices/`), VocalSet/VCTK (`just download-donors`), Freesound
+(`just download-freesound`), and any mic recordings (`just record-donor`) already on disk — then
+`evals/build_donor_pool.py` discovers every one of them and writes a single unified run config,
+`evals/fixtures/donor_pool.yaml` (committed for review; regenerated each run so newly fetched/recorded
+donors join automatically). The fetch steps are best-effort, so the pipeline still runs offline on
+the checked-in donors. `just list-donors` prints the current pool with licenses/attribution.
+
+**Which synthesis methods run.** voders routes each voice to a lane by its `kind`
+(`src/voders/corpus/orchestrator.py`), so the donor-vowel pool (`kind: deterministic_donor`) is sung
+by the **deterministic (WORLD)** lane, and every accepted base render is then fanned through the
+label-preserving **augmentation** profiles (`room_reverb`, `phone_codec`, `noisy_room`) — that is the
+augmentation multiplier (FR-005). The **svs** (NNSVS) and **voice_conversion** (RVC) lanes consume
+voices of kind `svs_voicebank` / `voice_conversion` plus their own out-of-process backends and
+consented models, so they are exercised by the dedicated `just demo-svs-nnsvs`, `just demo-rvc`, and
+`just demo-seedvc` recipes rather than the donor-vowel pool (a donor vowel can serve as a Seed-VC
+*reference*, which `demo-seedvc` shows).
+
+**Where the augmented data is output.** `just augment` writes everything under **`out/donor_pool/`**
+(git-ignored — generated corpora are never committed):
+
+| Path | Contents |
+| --- | --- |
+| `out/donor_pool/corpus/` | accepted samples — paired `*.wav` (22,050 Hz mono float32) + `*.tsv` labels; **this is the augmented training set** |
+| `out/donor_pool/manifest.jsonl` | one provenance row per attempted sample (lane, voice, seed, license, augmentation profile, verdict) — what `just train` consumes |
+| `out/donor_pool/rejected/` | samples that failed the validator (quarantined, never trained on) |
+| `out/donor_pool/stats.json` | aggregate stats (counts, timbre identities, augmentation coverage, pitch/duration distributions) |
+| `out/donor_pool/config.resolved.yaml` | the resolved run config (hashed into the manifest for replay) |
+
 **Zero-shot voice conversion (modern, no per-voice training).** `just demo-seedvc` runs **Seed-VC**
 (diffusion zero-shot VC) out-of-process (`backends/seedvc`, Python 3.10): the target voice is just a
 reference clip (a consented donor), no `.pth`. It keeps the source pitch (`--f0-condition`), so the

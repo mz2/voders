@@ -50,18 +50,28 @@ smoke: fixtures
     uv run voders run --config {{config}}
     uv run voders eval --manifest {{manifest}}
 
-# Whole data-augmentation pipeline (what the data-augmentation Action runs): fixtures -> fetch donor
-# vowels (best-effort, needs FREESOUND_API_TOKEN) -> render -> audit -> eval -> stats.
-augment FREESOUND_COUNT="3" config=config manifest=manifest: fixtures
-    -uv run --extra cpu python evals/download_freesound.py --count {{FREESOUND_COUNT}} --license cc0
+# Regenerate the unified donor-pool config from every donor on disk (all data-source methods).
+build-pool: setup
+    uv run --extra cpu python evals/build_donor_pool.py
+
+# Whole data-augmentation pipeline (what the data-augmentation Action runs). Enrolls donors from
+# EVERY source method (synthetic fixtures + VocalSet/VCTK + Freesound; mic recordings join if
+# present), unifies them into one pool, renders the deterministic lane, fans each accepted render
+# through the augmentation profiles, then audits + evaluates + aggregates. FETCH=0 skips the network
+# fetches and runs purely on the checked-in donors (this is what the CI action uses).
+augment FETCH="1" FREESOUND_COUNT="5" pool="evals/fixtures/donor_pool.yaml" manifest="out/donor_pool/manifest.jsonl": fixtures
+    {{ if FETCH == "1" { "-uv run --extra cpu --extra donors python evals/download_donors.py" } else { "echo 'FETCH=0: using checked-in donors (no dataset download)'" } }}
+    {{ if FETCH == "1" { "-uv run --extra cpu python evals/download_freesound.py --count " + FREESOUND_COUNT + " --license cc0" } else { "echo 'FETCH=0: using checked-in Freesound donors (no download)'" } }}
+    rm -rf out/donor_pool
+    uv run --extra cpu python evals/build_donor_pool.py --out {{pool}}
     @just list-donors
-    uv run voders run --config {{config}}
+    uv run voders run --config {{pool}}
     uv run voders audit --manifest {{manifest}}
     uv run voders eval --manifest {{manifest}}
     uv run voders stats --manifest {{manifest}}
 
 # Stub for model training on the augmented corpus. Wire in the real trainer where marked.
-train manifest=manifest: setup
+train manifest="out/donor_pool/manifest.jsonl": setup
     @test -f {{manifest}} || { echo "no manifest at {{manifest}} — run 'just augment' first" >&2; exit 1; }
     @echo "[train stub] augmented corpus: $(wc -l < {{manifest}}) clip(s) in {{manifest}}"
     @echo "[train stub] TODO: invoke the real training entrypoint here (e.g. uv run voders train ...)."
