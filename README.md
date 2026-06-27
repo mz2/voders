@@ -76,6 +76,7 @@ just run config=evals/fixtures/smoke.yaml   # render a corpus from a run config
 just eval                              # evaluate against the Success Criteria (non-zero on failure)
 just audit                             # license/consent audit
 just stats                             # aggregate corpus statistics
+just splits                            # source-stratified train/val splits (issue #7)
 ```
 
 `just run` writes under `out/<run_id>/`: `config.resolved.yaml` (the resolved end-result record),

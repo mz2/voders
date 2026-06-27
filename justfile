@@ -45,6 +45,10 @@ audit manifest=manifest: setup
 stats manifest=manifest: setup
     uv run voders stats --manifest {{manifest}}
 
+# Source-stratified train/val splits (issue #7): hold out per lane/voice/aug profile.
+splits manifest=manifest: setup
+    uv run voders splits --manifest {{manifest}}
+
 # Render the smoke fixtures then evaluate them end-to-end.
 smoke: fixtures
     uv run voders run --config {{config}}
