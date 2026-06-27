@@ -26,10 +26,15 @@ from voders.constants import SAMPLE_RATE
 
 DONORS_ROOT = Path(__file__).resolve().parents[1] / "models" / "donors"
 
+# Default fetch: VocalSet (a reliable streaming mirror of sustained sung vowels).
+# VCTK is primarily used as a voice-conversion *target* via the consented RVC p231 model
+# (`just download-rvc-voice`); a VCTK raw-donor-wav is only reachable via the canonical CSTR mirror,
+# which streams slowly, so it is opt-in (`python evals/download_donors.py vctk`), not in the default.
 SOURCES = {
     "vocalset": ("Bill13579/vocalset-mirror", "train", "vocalset_singer.wav"),
     "vctk": ("CSTR-Edinburgh/vctk", "train", "vctk_speaker.wav"),
 }
+_DEFAULT = ["vocalset"]
 
 
 def _first_audio(dataset_id: str, split: str):  # noqa: ANN202
@@ -81,7 +86,7 @@ def _save(arr: np.ndarray, sr: int, dest: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-    which = args or list(SOURCES)
+    which = args or _DEFAULT
     for name in which:
         if name not in SOURCES:
             print(f"unknown donor source {name!r}; known: {sorted(SOURCES)}")
