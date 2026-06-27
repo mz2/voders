@@ -89,12 +89,16 @@ class VoiceConversionLane:
                 )
                 .audio
             )
+            params: dict[str, object] = {}
+            if backend == "seedvc" and "diffusion_steps" in req.options:
+                params["diffusion_steps"] = req.options["diffusion_steps"]
             converted = convert_via_backend(
                 project,
                 module,
                 base,
                 model_ref=req.voice.model_ref,
                 device=str(req.options.get("device", "auto")),
+                params=params,
             )
             return RenderResult(audio=converted, label_score=req.score, notes={"backend": backend})
 
