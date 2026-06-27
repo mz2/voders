@@ -162,40 +162,36 @@ in the orchestrator. License is checked before spending GPU time.
 
 ---
 
-## Hardware verification (DGX Spark / NVIDIA GB10, 2026-06-27)
+## Hardware verification — both seams run on a DGX Spark (NVIDIA GB10, 2026-06-27)
 
 Verified on the actual GPU (CUDA 13.0, torch 2.12.1+cu130, sm_121):
-- **torch + CUDA** run on the GB10 (GPU matmul confirmed).
-- **Demucs separator path (Lego)** verified end-to-end on the GPU against the live library:
-  `get_model("htdemucs")` → sources `['drums','bass','other','vocals']`, **44.1 kHz / stereo**;
-  `apply_model(model, wav[None], device="cuda")[0]` → `(4, 2, N)`. This exposed and fixed a real
-  bug — the input must be resampled to the model's 44.1 kHz rate (now done via
-  `demucs.audio.convert_audio`, 48 kHz↔44.1 kHz around `apply_model`). The full Lego backend path
-  (fake generator → real Demucs → 22,050 mono stem, length-matched) runs on the GPU.
-- **preflight() hardened**: importing torch inside pytest surfaced a torch/triton
-  `TORCH_LIBRARY` double-registration `RuntimeError`; `preflight` now catches *any* torch
-  import/init failure (not just `ImportError`) and degrades gracefully (FR-013).
 
-Still **not** hardware-verified (the only remaining seam): the `ACEStepPipeline` call itself. The
-`acestep` package is not on PyPI (it is a GitHub research project), and its "1.5 XL / Lego /
-Complete" form from the source report could not be confirmed; the generator adapter is coded to the
-real ACE-Step **audio2audio file-I/O convention** (write a reference wav, pass `ref_audio_input` +
-`save_path`, read the result), which still needs confirmation against the installed checkpoint.
+- **Real ACE-Step generation** runs end-to-end on the GB10. The model is the genuine
+  **`ACE-Step/ACE-Step-v1-3.5B`** (package `ace_step` v0.2.0, **Apache-2.0** — `model_license`
+  corrected from the report's guessed "MIT"). A real `audio2audio` pass conditioned on a reference
+  vocal produced a 48 kHz stereo wav (model load 39 s, 10-step diffusion on `cuda:0`, ~7.5 GB). The
+  real `ACEStepPipeline.__call__` args were read from source and match the runner exactly; `__init__`
+  takes `device_id` (not `device`).
+- **Demucs separator path (Lego)** verified against the live library: `get_model("htdemucs")` →
+  sources `['drums','bass','other','vocals']`, **44.1 kHz / stereo**; this exposed and fixed a real
+  bug — input must be resampled to 44.1 kHz (now via `demucs.audio.convert_audio` around
+  `apply_model`).
+- **preflight() hardened**: importing torch under pytest surfaced a torch/triton `TORCH_LIBRARY`
+  double-registration `RuntimeError`; `preflight` now catches *any* torch import/init failure (FR-013).
 
-## Open verification items (one seam left — ACE-Step generator call)
+### Why a subprocess, not a dependency
 
-The `AceStepBackend` (`render/backends/acestep.py`) is a **full implementation** against the real
-ACE-Step + Demucs APIs (no stub / `NotImplementedError`): caption construction, 22.05↔48 kHz
-bridging, mode dispatch, and the Demucs stem-extraction path for Lego are concrete and CPU-unit-
-tested via injected fakes; only the two library calls need a GPU box to validate. Resolve these on
-that run and adjust the two adapter call-sites if a signature differs:
+ACE-Step **cannot be a direct dependency** of this project: it pins `soundfile==0.13.1` (we need
+`>=0.14`), `transformers==4.50`, `spacy`, `pytorch_lightning`, and its NLP/audio stack has no Python
+3.14 / linux-aarch64 wheels. So ACE-Step runs in **its own venv** (Python 3.12), and the backend
+drives it via subprocess (`acestep_runner.py`), configured by `VODERS_ACESTEP_PYTHON` (the ACE-Step
+venv's python) and optional `VODERS_ACESTEP_CHECKPOINT`. Two host-environment notes recorded while
+standing it up: ACE-Step's `cutlet→mojimoji` and `spacy==3.8.4` pins need source builds on aarch64
+(use a modern `spacy` + skip `cutlet`, which is import-lazy); and torchaudio 2.11 routes I/O through
+`torchcodec`/FFmpeg, so the runner monkeypatches `torchaudio.load/save` onto `soundfile`.
 
-1. Confirm the exact `xl-base` checkpoint **LICENSE** (the backend declares `model_license="MIT"`)
-   and that the `ACEStepPipeline(...)` call args (`audio2audio_enable` / `ref_audio_strength` /
-   `manual_seeds`) match the pinned release's `generate_music.py`.
-2. **Complete** emits a fused mix with no separable stem, so FR-015 stem retention / SC-008
-   re-mixability are **Lego-mode properties** — Complete samples set `stem_available=false`
-   (implemented). Revisit only if strict Complete-stem retention is required.
-3. Confirm the ACE-Step package name / `pipeline_ace_step` import path and the Python 3.14 wheel for
-   `acestep` + `demucs`; build from source if no wheel (same risk noted for `001` niche audio deps).
-   `demucs>=4.0` is pinned in the `accomp` extra; `acestep` is installed out-of-band.
+### Remaining design note (not a blocker)
+
+**Complete** emits a fused mix with no separable stem, so FR-015 stem retention / SC-008
+re-mixability are **Lego-mode properties** — Complete samples set `stem_available=false`
+(implemented). Revisit only if strict Complete-stem retention is required.

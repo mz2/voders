@@ -22,6 +22,28 @@ render it generates accompaniment (Lego or Complete per the config), validates t
 mix**, and writes `mix.wav` (+ `accompaniment_stem.wav` for Lego) and a JSONL manifest line to the
 output dir. The smoke config uses `backend: fake` so it needs no GPU.
 
+### Real ACE-Step backend (GPU)
+
+ACE-Step (`ACE-Step/ACE-Step-v1-3.5B`, Apache-2.0) pins deps that conflict with this project and lack
+Python 3.14 / aarch64 wheels, so it runs in **its own venv** and the backend drives it via subprocess.
+Set up that venv once, then point the backend at it:
+
+```bash
+# 1. ACE-Step in its own environment (Python 3.12), driven via subprocess.
+uv venv --python 3.12 /opt/acestep-venv
+uv pip install --python /opt/acestep-venv --no-deps git+https://github.com/ace-step/ACE-Step.git
+uv pip install --python /opt/acestep-venv torch torchaudio torchvision torchcodec diffusers \
+  transformers huggingface_hub accelerate safetensors einops omegaconf "numba>=0.61" soundfile \
+  librosa loguru tqdm pypinyin py3langid pytorch_lightning "spacy>=3.8" hangul-romanize num2words
+# 2. Demucs (Lego separation) lives in this project's accomp extra.
+uv sync --extra cpu --extra accomp
+# 3. Tell the backend where ACE-Step's python is (weights auto-download from HF on first run).
+export VODERS_ACESTEP_PYTHON=/opt/acestep-venv/bin/python
+```
+
+> On a host whose torchaudio routes I/O through `torchcodec` without a matching FFmpeg, the runner
+> already falls back to `soundfile` for audio load/save — no system FFmpeg needed.
+
 To use the real model, install the extra and set `backend: acestep` (GPU required):
 
 ```yaml

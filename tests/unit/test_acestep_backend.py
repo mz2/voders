@@ -49,7 +49,7 @@ def test_backend_satisfies_protocol_and_caps():
     assert b.requires_gpu() is True
     assert b.supports("lego") and b.supports("complete")
     assert not b.supports("bogus")
-    assert b.model_license == "MIT"
+    assert b.model_license == "Apache-2.0"  # real ace_step v0.2.0 license
 
 
 def test_complete_returns_mono_22050_mix():

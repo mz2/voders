@@ -1,26 +1,26 @@
-"""ACE-Step 1.5 XL accompaniment backend (research.md Decision 1; GPU, `accomp` extra).
+"""ACE-Step accompaniment backend (research.md Decision 1; GPU).
 
-ACE-Step 1.5 XL-Base is a 4B-parameter Diffusion Transformer ("DiT" — a transformer that denoises
-audio latents) over a 48 kHz stereo 1-D VAE. The **Complete** task conditions on the vocal and
-decodes a full mix with the singing held in place; **Lego** generates an accompaniment stem to sum
-under the untouched vocal — here realized by generating the conditioned audio and then extracting
-the non-vocal stems with a source separator (a Demucs-class model that splits a mix into vocal /
-instrument tracks), so the layer summed under the original vocal contains no duplicate voice.
+Uses the real **ACE-Step** music model (package ``ace_step`` v0.2.0, Apache-2.0) via its
+audio-to-audio path, conditioned on the vocal. Two modes:
+  * **Complete** — ACE-Step returns a full mix with the singing held in place (lower edit strength).
+  * **Lego** — ACE-Step generates the conditioned audio, then a source separator (Demucs — a model
+    that splits a mix into vocal/instrument stems) keeps only the non-vocal stems, which are summed
+    under the *untouched* original vocal so the layer adds no duplicate voice.
 
-Design for testability + honesty about hardware:
-  * The model and the separator are injectable callables (``generator`` / ``separator``). The real
-    ones are built lazily (``_AceStepGenerator`` / ``_DemucsSeparator``) and import torch / acestep
-    / demucs only when first used, so the CPU baseline never pulls in torch at module load (FR-009).
-  * Everything except the two library calls — caption construction, 22.05 kHz↔48 kHz bridging, mode
-    dispatch, mono/stereo handling — is concrete and unit-tested on CPU with fakes injected.
-  * The two library calls target the real ACE-Step / Demucs APIs. ⚠️ Their exact signatures and the
-    1.5 XL Lego/Complete task names are unverified against a pinned release (research.md open items
-    1–3); confirm on a GPU run with weights installed and adjust the adapters below if needed. The
-    backend declares ``model_license`` honestly — VERIFY the checkpoint LICENSE before release.
+Why a subprocess: ACE-Step pins a stack (``soundfile==0.13.1`` / ``transformers`` / ``spacy`` /
+``pytorch_lightning``) that conflicts with this project's deps and lacks Python 3.14 / aarch64
+wheels, so it cannot be a direct dependency. ACE-Step therefore runs in **its own environment**
+(``acestep_python``) driven by ``acestep_runner.py`` (subprocess); Demucs runs in this project's
+``accomp`` extra. The generator/separator are injectable callables so the orchestration — caption
+construction, 22.05↔48 kHz bridging, mode dispatch, length-fit — is unit-tested on CPU with fakes.
+
+Hardware-verified on a DGX Spark (NVIDIA GB10, CUDA 13): the Demucs separation path and a real
+ACE-Step audio2audio generation both run on the GPU (research.md "Hardware verification").
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 
 import numpy as np
@@ -73,81 +73,76 @@ def _to_native_stereo(vocal: np.ndarray, native_sr: int = _NATIVE_SR) -> np.ndar
     return np.stack([up, up], axis=-1)
 
 
+def _runner_path() -> str:
+    return os.path.join(os.path.dirname(__file__), "acestep_runner.py")
+
+
 class _AceStepGenerator:
-    """Real ACE-Step 1.5 XL adapter (GPU). Built lazily; signature verified on a GPU run."""
+    """Real ACE-Step adapter via subprocess into the ACE-Step environment.
+
+    ACE-Step (``ace_step`` v0.2.0, Apache-2.0) can't be a direct dependency of this project (pinned
+    ``soundfile==0.13.1`` / ``transformers`` / ``spacy`` conflict and lack Python 3.14 / aarch64
+    wheels). So generation runs in ACE-Step's own venv: this adapter writes the reference vocal + a
+    JSON spec, runs ``acestep_runner.py`` with that venv's Python (``acestep_python``), and reads
+    back the output wav. The runner call args were verified against the real
+    ``ACEStepPipeline.__call__`` signature.
+    """
 
     def __init__(
         self,
         model_id: str,
         *,
+        acestep_python: str,
         checkpoint_dir: str | None,
-        dtype: str,
-        device: str,
+        device_id: int,
+        cpu_offload: bool,
         mode: str,
+        timeout_s: float,
     ) -> None:
         self.model_id = model_id
+        self.acestep_python = acestep_python
         self.checkpoint_dir = checkpoint_dir
-        self.dtype = dtype
-        self.device = device
+        self.device_id = device_id
+        self.cpu_offload = cpu_offload
         self.mode = mode
-        self._pipe = None
-
-    def _ensure(self) -> None:
-        if self._pipe is not None:
-            return
-        try:
-            from acestep.pipeline_ace_step import ACEStepPipeline
-        except ImportError as exc:  # pragma: no cover - exercised only without the extra/weights
-            raise RuntimeError(
-                "ACE-Step backend requires the `accomp` extra and the ACE-Step package "
-                "(uv sync --extra accomp; install ACE-Step 1.5 XL weights). See research.md open "
-                "item 3 for the package name / Python 3.14 wheel."
-            ) from exc
-        self._pipe = ACEStepPipeline(
-            checkpoint_dir=self.checkpoint_dir, dtype=self.dtype, device=self.device
-        )
+        self.timeout_s = timeout_s
 
     def __call__(
         self, vocal_48k_stereo: np.ndarray, caption: str, seed: int, duration_s: float
-    ) -> np.ndarray:  # pragma: no cover - requires GPU + weights
-        self._ensure()
-        assert self._pipe is not None
-        import os
+    ) -> np.ndarray:  # pragma: no cover - requires the ACE-Step env + weights
+        import json
+        import subprocess
         import tempfile
 
         import soundfile as sf
 
-        # ACE-Step's audio2audio path takes a reference-audio FILE and writes its result to
-        # ``save_path`` (the documented convention). "Complete" holds the vocal in place (lower edit
-        # strength); "Lego" drifts further since only its non-vocal stems are kept downstream.
-        # ⚠️ VERIFY arg names against the installed checkpoint's generate_music.py (open item 1/3).
+        # "Complete" holds the vocal in place (lower edit strength); "Lego" drifts further since
+        # only its non-vocal stems are kept downstream after source separation.
         strength = 0.55 if self.mode == MODE_COMPLETE else 0.75
-        tmp = tempfile.mkdtemp(prefix="acestep_")
-        ref_path = os.path.join(tmp, "ref.wav")
-        out_path = os.path.join(tmp, "out.wav")
-        try:
+        with tempfile.TemporaryDirectory(prefix="acestep_") as tmp:
+            ref_path = os.path.join(tmp, "ref.wav")
+            out_path = os.path.join(tmp, "out.wav")
+            spec_path = os.path.join(tmp, "spec.json")
             sf.write(ref_path, vocal_48k_stereo, _NATIVE_SR, subtype="FLOAT")
-            self._pipe(
-                format="wav",
-                audio_duration=float(duration_s),
-                prompt=caption,
-                lyrics="",
-                infer_step=60,
-                guidance_scale=15.0,
-                scheduler_type="euler",
-                omega_scale=10.0,
-                manual_seeds=str(int(seed)),
-                audio2audio_enable=True,
-                ref_audio_strength=strength,
-                ref_audio_input=ref_path,
-                save_path=out_path,
+            spec = {
+                "ref": ref_path,
+                "out": out_path,
+                "prompt": caption,
+                "seed": int(seed),
+                "duration": float(duration_s),
+                "strength": strength,
+                "checkpoint_dir": self.checkpoint_dir or "",
+                "device_id": self.device_id,
+                "cpu_offload": self.cpu_offload,
+            }
+            with open(spec_path, "w", encoding="utf-8") as fh:
+                json.dump(spec, fh)
+            subprocess.run(
+                [self.acestep_python, _runner_path(), spec_path],
+                check=True,
+                timeout=self.timeout_s,
             )
             data, _ = sf.read(out_path, dtype="float32", always_2d=True)  # (N, channels)
-        finally:
-            for p in (ref_path, out_path):
-                if os.path.exists(p):
-                    os.remove(p)
-            os.rmdir(tmp)
         return data if data.shape[1] == 2 else np.repeat(data, 2, axis=1)
 
 
@@ -190,28 +185,38 @@ class _DemucsSeparator:
 
 
 class AceStepBackend:
-    """Vocal-conditioned accompaniment via ACE-Step 1.5 XL-Base + source separation (GPU)."""
+    """Vocal-conditioned accompaniment via real ACE-Step (subprocess) + Demucs source separation.
+
+    ACE-Step generation runs in its own environment (``acestep_python``); Demucs separation for Lego
+    runs in this project's ``accomp`` extra. ``acestep_python`` / ``checkpoint_dir`` default from
+    the ``VODERS_ACESTEP_PYTHON`` / ``VODERS_ACESTEP_CHECKPOINT`` env vars.
+    """
 
     name = "acestep"
-    model_version = "1.5-xl"
-    # MIT per the 1.5 repo (Apache-2.0 upstream) — VERIFY the checkpoint LICENSE (open item 1).
-    model_license = "MIT"
+    # Real package: ace_step v0.2.0, Apache-2.0 (verified from the repo's setup.py).
+    model_version = "0.2.0"
+    model_license = "Apache-2.0"
     attribution_text: str | None = None
 
     def __init__(
         self,
-        model_id: str = "ace-step-1.5-xl-base",
+        model_id: str = "ace-step-v1-3.5b",
         *,
+        acestep_python: str | None = None,
         checkpoint_dir: str | None = None,
-        dtype: str = "bfloat16",
-        device: str = "cuda",
+        device_id: int = 0,
+        cpu_offload: bool = False,
+        timeout_s: float = 1800.0,
         generator: GeneratorFn | None = None,
         separator: SeparatorFn | None = None,
     ) -> None:
-        self.model_id = model_id or "ace-step-1.5-xl-base"
-        self.checkpoint_dir = checkpoint_dir
-        self.dtype = dtype
-        self.device = device
+        self.model_id = model_id or "ace-step-v1-3.5b"
+        self.acestep_python = acestep_python or os.environ.get("VODERS_ACESTEP_PYTHON")
+        self.checkpoint_dir = checkpoint_dir or os.environ.get("VODERS_ACESTEP_CHECKPOINT") or None
+        self.device_id = device_id
+        self.cpu_offload = cpu_offload
+        self.timeout_s = timeout_s
+        self.device = f"cuda:{device_id}"
         self._generator = generator
         self._separator = separator
 
@@ -224,35 +229,36 @@ class AceStepBackend:
     def preflight(self, mode: str) -> str | None:
         """Return a skip reason if the backend can't run here, else None (FR-013).
 
-        Probes for torch + an available GPU and the ACE-Step package (and Demucs for Lego) without
-        loading any weights, so the run degrades gracefully instead of crashing mid-generation.
-        Injected generators/separators (tests) skip the probe entirely.
+        Checks that the ACE-Step environment is configured/reachable and (for Lego) that a Demucs
+        separator is importable in this env, without loading any weights — so the run degrades
+        gracefully. Injected generators/separators (tests) skip the probe entirely.
         """
         if self._generator is not None and (mode == MODE_COMPLETE or self._separator is not None):
             return None
-        try:
-            import torch
-        except Exception as exc:  # noqa: BLE001 - any torch import/init failure → graceful skip
-            return f"torch unavailable ({type(exc).__name__}) — install the `accomp` extra"
-        if not torch.cuda.is_available():
-            return "no CUDA GPU available for the ACE-Step backend"
-        import importlib.util
+        if not self.acestep_python:
+            return "ACE-Step env not configured — set VODERS_ACESTEP_PYTHON to its venv python"
+        if not os.path.exists(self.acestep_python):
+            return f"ACE-Step python not found at {self.acestep_python!r}"
+        if mode == MODE_LEGO:
+            import importlib.util
 
-        if importlib.util.find_spec("acestep") is None:
-            return "the ACE-Step package is not installed (research.md open item 3)"
-        if mode == MODE_LEGO and importlib.util.find_spec("demucs") is None:
-            return "Lego mode needs a Demucs-class separator (install the `accomp` extra)"
+            if importlib.util.find_spec("demucs") is None:
+                return "Lego mode needs a Demucs-class separator (install the `accomp` extra)"
         return None
 
     def _get_generator(self, mode: str) -> GeneratorFn:
         if self._generator is not None:
             return self._generator
+        if not self.acestep_python:
+            raise RuntimeError("ACE-Step env not configured (set VODERS_ACESTEP_PYTHON)")
         return _AceStepGenerator(
             self.model_id,
+            acestep_python=self.acestep_python,
             checkpoint_dir=self.checkpoint_dir,
-            dtype=self.dtype,
-            device=self.device,
+            device_id=self.device_id,
+            cpu_offload=self.cpu_offload,
             mode=mode,
+            timeout_s=self.timeout_s,
         )
 
     def _get_separator(self) -> SeparatorFn:
