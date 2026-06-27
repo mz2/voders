@@ -69,7 +69,7 @@ within 50 ms; offset within max(50 ms, 20% of note length). Deterministic lane M
   produced corpus and prints a pass/fail table mapped to the spec's Success Criteria:
   - onset within 50 ms ≥99% (SC-001), offset within tolerance ≥99% (SC-002),
   - first-attempt validator pass ≥95% (SC-007), zero `consent_verified=false` voices (SC-008),
-  - per-sample isolated reproducibility within tolerance (SC-009).
+  - per-sample isolated reproducibility within the SC-009 tolerance (bit-exact for deterministic/voice-conversion lanes; same verdict + f0/onset within validator tolerances for neural/GPU lanes).
   Exit code is non-zero if any gated criterion fails. SC-003 (downstream note-F1 ≥0.15) is a
   consumer-side metric (training is out of scope per the spec) and is reported as an *informational*
   number when a Basic Pitch eval harness is available, not gated here.
@@ -112,7 +112,7 @@ specs/001-synthetic-singing-corpus/
 src/voders/
 ├── __init__.py
 ├── config/              # Run Config: load/validate YAML, resolve, hash (FR-016)
-├── scores/              # parse .tsv scores, validate monophony, convert to MIDI/MusicXML (FR-001)
+├── scores/              # parse .tsv, validate monophony, MIDI/MusicXML; learn min_note_ms from annotation distribution (FR-001, FR-018)
 ├── seeds.py             # master-seed → per-sample/per-stage derivation (FR-013)
 ├── render/
 │   ├── base.py          # RendererLane interface/contract (FR-015)
@@ -120,7 +120,7 @@ src/voders/
 │   ├── svs.py           # neural SVS lane (DiffSinger/NNSVS) with force-score-F0 mode (FR-007)
 │   ├── voiceconv.py     # RVC / so-vits-svc timbre fan-out, auto_predict_f0=False (FR-004)
 │   └── augment.py       # label-safe augmentation chain (FR-005, FR-014)
-├── validate/            # alignment validator: f0 + onset/offset vs score; verdicts (FR-006)
+├── validate/            # alignment validator: f0 + onset/offset vs score; verdicts (FR-006); method timing budgets + latency compensation (FR-019)
 ├── manifest/            # JSONL provenance writer/reader, license audit, stats (FR-008/011/012)
 ├── corpus/              # sharded on-disk layout, accepted vs rejected trees, export (FR-006a)
 ├── voices/              # voice enrollment: license string + consent_verified flag (FR-011)

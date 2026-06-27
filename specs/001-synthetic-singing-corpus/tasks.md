@@ -73,9 +73,9 @@ Single Python project: package at `src/voders/`, tests at `tests/`, eval harness
 
 ### Implementation for User Story 1
 
-- [ ] T018 [P] [US1] Implement `.tsv` score parser + monophony check + `min_note_ms` calibration from input annotation statistics in `src/voders/scores/parse.py` (FR-001, Edge Cases)
+- [ ] T018 [P] [US1] Implement `.tsv` score parser + monophony check in `src/voders/scores/parse.py`, and a learned-threshold analysis pass in `src/voders/scores/analyze.py` that derives `min_note_ms` = max(low percentile (default 1st) of the input note-duration distribution, the active methods' temporal-resolution floor, 50 ms) and records the learned value + contributing method floors to stats/manifest (FR-001, FR-018, FR-019)
 - [ ] T019 [US1] Implement deterministic WORLD f0-driven renderer (score → step/glide f0 contour → resynthesis) in `src/voders/render/deterministic.py`, no GPU import at module load (FR-003, FR-009)
-- [ ] T020 [US1] Implement alignment validator (f0 via `pyin` CPU fallback; onset/offset vs score → verdict) in `src/voders/validate/validator.py` (FR-006, SC-001/002)
+- [ ] T020 [US1] Implement alignment validator (f0 via `pyin` CPU fallback; onset/offset vs score → verdict) in `src/voders/validate/validator.py`, with a method-timing-budget registry (`src/voders/validate/timing.py`) holding each method's documented frame hop + constant group delay, and compensating the group delay before comparison (FR-006, FR-019, SC-001/002)
 - [ ] T021 [US1] Wire `run` deterministic path: parse → render → validate → write accepted/rejected + append manifest in `src/voders/cli/run.py` + `src/voders/corpus/orchestrator.py` (FR-002, FR-006a)
 - [ ] T022 [US1] Implement `voders eval` command (reads manifest, prints SC pass/fail table, exit code) in `src/voders/cli/eval.py` wrapping `evals/run_eval.py`
 
@@ -151,7 +151,7 @@ Single Python project: package at `src/voders/`, tests at `tests/`, eval harness
 ### Implementation for User Story 4
 
 - [ ] T038 [US4] Implement SVS lane `force_score_f0` mode (DiffSinger via OpenUTAU / NNSVS, lazy GPU import) in `src/voders/render/svs.py` (FR-007, research Decision 3)
-- [ ] T039 [US4] Implement `rederive_labels` mode: MFA forced alignment + onset detection → re-derived score + deviation in `src/voders/render/svs.py` + `src/voders/validate/rederive.py` (FR-007)
+- [ ] T039 [US4] Implement `rederive_labels` mode: MFA forced alignment + onset detection → re-derived score + deviation in `src/voders/render/svs.py` + `src/voders/validate/rederive.py`, registering the aligner/onset-detector documented frame hop and group delay in the timing-budget registry and compensating before deviation is computed (FR-007, FR-019)
 - [ ] T040 [US4] Enforce rejection on >50 ms deviation with flagged provenance in orchestrator (SC-010)
 
 **Checkpoint**: US1–US4 independently functional.
@@ -171,13 +171,13 @@ Single Python project: package at `src/voders/`, tests at `tests/`, eval harness
 
 ### Evaluation harness for User Story 5 ⚠️
 
-- [ ] T043 [US5] Extend `evals/run_eval.py` with SC-008 (zero unconsented voices in accepted corpus) and SC-009 (isolated re-render matches within tolerance)
+- [ ] T043 [US5] Extend `evals/run_eval.py` with SC-008 (zero unconsented voices in accepted corpus) and SC-009 (isolated re-render matches the documented tolerance: bit-exact for deterministic/voice-conversion lanes; same verdict + f0-within-±25-cents + onset-within-10 ms for neural/GPU lanes)
 
 ### Implementation for User Story 5
 
 - [ ] T044 [P] [US5] Implement `voders audit` command (license/consent audit over manifest) in `src/voders/cli/audit.py` (FR-011, SC-008)
 - [ ] T045 [P] [US5] Implement `voders stats` command writing `stats.json` (totals, unique scores/voices, timbre identities, pitch/duration distributions, augmentation coverage) in `src/voders/cli/stats.py` (FR-012)
-- [ ] T046 [US5] Implement per-sample isolated reproduction (re-run by derived seed) verification in `src/voders/corpus/reproduce.py` (FR-013, SC-009)
+- [ ] T046 [US5] Implement per-sample isolated reproduction (re-run by derived seed) verification in `src/voders/corpus/reproduce.py`, asserting the SC-009 tolerance per lane (bit-exact vs. verdict+f0/onset) (FR-013, SC-009)
 
 **Checkpoint**: All five user stories independently functional.
 

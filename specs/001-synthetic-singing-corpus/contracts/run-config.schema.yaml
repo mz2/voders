@@ -39,7 +39,22 @@ augmentation_profiles:          # ordered, label-preserving (FR-005)
 validator:                      # tolerances (FR-006)
   onset_ms: 50                  # SC-001
   offset_rule: "max(50ms, 20%)" # SC-002
-  min_note_ms: null             # null -> calibrate from input annotation statistics
+  min_note_ms: null             # null -> LEARN from input annotation distribution (FR-018):
+                                #   low percentile of note durations, floored at onset_ms
+  min_note_percentile: 1        # percentile used by the learned-threshold analysis pass
   f0_cents: 25                  # ±25 cents
   f0_coverage: 0.80             # over >=80% of sustained interval
   snr_floor_db: 0               # below floor -> quarantine (FR-014)
+
+# method timing (FR-019): each timing-affecting method contributes two values —
+#   - frame_hop_ms: the estimator's documented analysis hop (e.g., CREPE = 10 ms)
+#   - group_delay_ms: a codec/resampler's known constant latency, from its own spec/docs
+# Defaults live in code, taken from each method's documentation (or measured once on a
+# click-train fixture); override here only when a value differs. No values are invented.
+
+reproduction:                   # SC-009 tolerance for isolated re-render verification
+  deterministic: bit_exact      # deterministic + voice-conversion lanes
+  neural:                       # non-bit-deterministic GPU lanes
+    same_verdict: true
+    f0_cents: 25                # match original within validator f0 tolerance
+    onset_ms: 10               # onset within 10 ms of original render

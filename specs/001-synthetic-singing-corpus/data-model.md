@@ -19,7 +19,7 @@ The authoritative ground truth for any sample derived from it.
 - Monophonic: no two notes overlap in time. Overlapping/polyphonic scores are rejected or split into
   separate monophonic tracks, the choice recorded in provenance (Edge Cases).
 - `offset_s > onset_s`; a note shorter than the configured `min_note_ms` is flagged or rejected
-  (Edge Cases; `min_note_ms` default calibrated from input annotation statistics).
+  (Edge Cases; `min_note_ms` learned from the annotation distribution + active method timing, FR-018/FR-019).
 - Empty score → no sample; single-note score → still validated.
 
 ## Voice (Timbre)
@@ -52,7 +52,8 @@ A single declarative, version-controlled file fully specifying one run (FR-016).
 | `voices` | list[Voice] | Enrolled voice pool |
 | `lanes` | map | Per-lane enable/disable + lane options (FR-015) |
 | `augmentation_profiles` | list[AugmentationProfile] | Label-safe transforms to apply |
-| `validator` | map | Tolerances: onset_ms=50, offset = max(50ms, 20%), `min_note_ms`, f0 cents/coverage, snr_floor_db |
+| `validator` | map | Tolerances: onset_ms=50, offset = max(50ms, 20%), `min_note_ms` (learned from annotation distribution per FR-018; null = learn), f0 cents/coverage, snr_floor_db |
+| `reproduction` | map | SC-009 tolerance: bit-exact (deterministic/voice-conversion) vs. same-verdict + f0/onset bounds (neural) |
 | `output_root` | path | Where corpus/manifest/checkpoints are written |
 
 **Rules:**
@@ -97,6 +98,22 @@ Per-sample gate result; lives inside the provenance record (FR-006).
 
 **Lifecycle:** rendered → validated → one terminal status. Accepted samples go to `corpus/`; all
 non-accepted statuses retain provenance **and** audio under `rejected/` (FR-006a), never trained on.
+
+## MethodTimingBudget (per timing-affecting method)
+
+Two documented numbers per timing-affecting method (f0 estimator, onset detector, forced aligner,
+codec/resampler). Values come from each method's own documentation, or a one-time measurement on a
+click-train fixture — not invented (FR-019).
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `method` | str | e.g., `crepe_f0`, `pyin_f0`, `mfa_align`, `mp3_codec` |
+| `frame_hop_ms` | float | The method's documented analysis hop (e.g., CREPE = 10 ms) |
+| `group_delay_ms` | float | A codec/resampler's known constant latency, from its spec |
+
+**Rules:** `min_note_ms` (FR-018) is floored by the largest `frame_hop_ms` among active methods; the
+validator subtracts each method's `group_delay_ms` from measured onsets/offsets before comparing to
+the score (FR-019). Active budgets are recorded in the run's stats/manifest for audit.
 
 ## ProvenanceRecord (one JSON Lines row)
 
