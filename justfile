@@ -82,6 +82,20 @@ augment FETCH="1" FREESOUND_COUNT="5" pool="evals/fixtures/donor_pool.yaml" mani
     uv run voders eval --manifest {{manifest}}
     uv run voders stats --manifest {{manifest}}
 
+# Like `augment`, but ALSO lays vocal-conditioned accompaniment (spec 002) under each accepted donor
+# render — including the real VocalSet singer — as a training augmentation. BACKEND=fake is CPU/CI;
+# BACKEND=acestep uses the real GPU model (run `just setup-acestep-backend` first).
+augment-accomp BACKEND="fake" FETCH="1" FREESOUND_COUNT="5" pool="evals/fixtures/donor_pool_accomp.yaml" manifest="out/donor_pool_accomp/manifest.jsonl": fixtures setup-accomp
+    {{ if FETCH == "1" { "-uv run --extra cpu --extra donors python evals/download_donors.py" } else { "echo 'FETCH=0: using checked-in donors (no dataset download)'" } }}
+    {{ if FETCH == "1" { "-uv run --extra cpu python evals/download_freesound.py --count " + FREESOUND_COUNT + " --license cc0" } else { "echo 'FETCH=0: using checked-in Freesound donors (no download)'" } }}
+    rm -rf out/donor_pool_accomp
+    uv run --extra cpu python evals/build_donor_pool.py --accompaniment {{BACKEND}} --run-id donor_pool_accomp --out {{pool}}
+    @just list-donors
+    uv run --extra cpu --extra accomp voders run --config {{pool}}
+    uv run --extra cpu --extra accomp voders audit --manifest {{manifest}}
+    uv run --extra cpu --extra accomp voders eval --manifest {{manifest}}
+    uv run --extra cpu --extra accomp voders stats --manifest {{manifest}}
+
 # Stub for model training on the augmented corpus. Wire in the real trainer where marked.
 train manifest="out/donor_pool/manifest.jsonl": setup
     @test -f {{manifest}} || { echo "no manifest at {{manifest}} — run 'just augment' first" >&2; exit 1; }

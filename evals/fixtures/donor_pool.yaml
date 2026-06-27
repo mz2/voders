@@ -16,6 +16,11 @@ voices:
   license: CC0 synthetic vowel
   consent_verified: true
   model_ref: evals/fixtures/voices/donor_oo_synth.wav
+- voice_id: vocalset_singer
+  kind: deterministic_donor
+  license: VocalSet, CC BY 4.0 (Wilkins et al.); streamed sample
+  consent_verified: true
+  model_ref: models/donors/vocalset_singer.wav
 - voice_id: freesound_211494_choir_aah_wav
   kind: deterministic_donor
   license: CC0 1.0 (Freesound)
