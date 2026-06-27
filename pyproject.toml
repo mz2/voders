@@ -34,6 +34,12 @@ gpu = [
     "torchaudio",
     "torchcrepe>=0.0.24",
 ]
+# Lyric articulation (FR-006): grapheme-to-phoneme via phonemizer/espeak-ng. Imported lazily so the
+# CPU baseline and lyric-free runs never load it. The espeak-ng *system* library is a separate
+# prerequisite (e.g. `apt install espeak-ng`); see README.
+lyrics = [
+    "phonemizer>=3.3",
+]
 dev = [
     "ruff>=0.15",
     "mypy>=2.1",

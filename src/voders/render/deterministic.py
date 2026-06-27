@@ -133,8 +133,15 @@ class DeterministicLane:
         out = np.zeros(total_samples, dtype=np.float32)
 
         dip_n = int(_ARTICULATION_DIP_MS * SAMPLE_RATE / 1000.0)
+        dynamics_applied = False
         for i, note in enumerate(score.notes):
             y = _render_note(note, sp_seq, ap_seq)
+            # Honour the optional per-note gain from the score-augmentation volume axis (FR-008).
+            # The trailing peak-normalise rescales the whole signal, so the relative per-note level
+            # differences survive — widening the dynamics without touching the labels (SC-004).
+            if note.gain is not None:
+                y = (y * np.float32(note.gain)).astype(np.float32)
+                dynamics_applied = True
             start = int(round(note.onset_s * SAMPLE_RATE))
             end = min(start + y.size, out.size)
             out[start:end] += y[: end - start]
@@ -152,4 +159,5 @@ class DeterministicLane:
         peak = float(np.max(np.abs(out))) if out.size else 0.0
         if peak > 0:
             out = (out * (0.9 / peak)).astype(np.float32)
-        return RenderResult(audio=to_mono_float32(out), label_score=score, notes={})
+        notes: dict[str, object] = {"dynamics_applied": True} if dynamics_applied else {}
+        return RenderResult(audio=to_mono_float32(out), label_score=score, notes=notes)

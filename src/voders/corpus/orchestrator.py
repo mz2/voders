@@ -18,9 +18,11 @@ from voders.manifest.io import ManifestWriter
 from voders.manifest.models import ProvenanceRecord, ValidationVerdict, VerdictStatus
 from voders.render.augmentor import Augmentor
 from voders.render.base import RendererLane, RenderRequest, RenderResult
+from voders.scoreaug.expand import DroppedVariant, expand_full
+from voders.scoreaug.models import ScoreVariant
 from voders.scores.analyze import LearnedThreshold, learn_min_note_ms
 from voders.scores.parse import ParsedScore, PolyphonyError, parse_tsv, serialize_score
-from voders.seeds import sample_seed
+from voders.seeds import derive_seed, sample_seed
 from voders.validate.timing import TimingRegistry
 from voders.validate.validator import Validator
 from voders.voices.models import Voice, VoiceKind
@@ -99,7 +101,10 @@ class Orchestrator:
         write_resolved(self.config, self.store.config_resolved_path)
 
         parsed, refusals = self._load_scores()
+        # Threshold is learned over the BASE scores only: derived variants must not shift the
+        # learned annotation distribution (and a feature-off run is unaffected — SC-001).
         learned = self._learn_threshold(parsed)
+        work_items, drops = self._expand_work(parsed)
         if self.config.validator.min_note_ms is not None:
             min_note_ms = self.config.validator.min_note_ms
         else:
@@ -115,12 +120,19 @@ class Orchestrator:
         index = 0
 
         with ManifestWriter(self.store.manifest_path) as manifest:
+            # Record range-guard drops up front so the manifest carries every variant's lineage,
+            # including the ones never rendered (FR-005). No audio is written for a drop.
+            for drop in drops:
+                drop_record = self._record_drop(drop)
+                manifest.append(drop_record)
+                self._tally(summary, drop_record)
+
             for lane_name in self.config.enabled_lanes():
                 lane = self.lanes.get(lane_name)
                 if lane is None or lane_name not in LANE_VOICE_KINDS:
                     continue
                 options = self.config.lane_options(lane_name)
-                for ps in parsed:
+                for ps, variant in work_items:
                     for voice in self._voices_for_lane(lane_name):
                         sample_id = f"{ps.score.score_id}_singer_{voice.voice_id}"
                         if lane_name != "deterministic":
@@ -137,6 +149,7 @@ class Orchestrator:
                             options=options,
                             index=index,
                             manifest=manifest,
+                            variant=variant,
                         )
                         self._tally(summary, record)
                         self.store.mark_completed(sample_id)
@@ -163,6 +176,66 @@ class Orchestrator:
                                 self.store.mark_completed(aug_record.sample_id)
                                 index += 1
         return summary
+
+    def _expand_work(
+        self, parsed: list[ParsedScore]
+    ) -> tuple[list[tuple[ParsedScore, ScoreVariant | None]], list[DroppedVariant]]:
+        """Build the render work list: each base score plus its per-profile score variants (FR-002).
+
+        With no ``score_augmentation`` the list is exactly ``[(ps, None) for ps in parsed]`` in the
+        original order, so a feature-off run is byte-identical to today (SC-001).
+        """
+        work: list[tuple[ParsedScore, ScoreVariant | None]] = []
+        drops: list[DroppedVariant] = []
+        for ps in parsed:
+            work.append((ps, None))
+            for profile in self.config.score_augmentation:
+                profile_seed = derive_seed(
+                    self.config.master_seed, ps.score.score_id, "score_aug", profile.profile_id
+                )
+                result = expand_full(ps, profile, profile_seed)
+                for variant in result.variants:
+                    variant_ps = ParsedScore(
+                        score=variant.score,
+                        source_path=ps.source_path,
+                        raw_bytes=serialize_score(variant.score),
+                    )
+                    work.append((variant_ps, variant))
+                drops.extend(result.drops)
+        return work, drops
+
+    @staticmethod
+    def _aug_lineage(variant: ScoreVariant | None, *, dynamics_applied: bool = False) -> dict:
+        """Score-augmentation provenance fields for a record (empty dict for an original)."""
+        if variant is None:
+            return {}
+        return {
+            "base_score_id": variant.base_score_id,
+            "score_aug_profile": variant.profile_id,
+            "score_aug_axis": variant.axis.value,
+            "score_aug_transform": variant.transform,
+            "score_aug_seed": variant.seed,
+            "dynamics_applied": dynamics_applied,
+        }
+
+    def _record_drop(self, drop: DroppedVariant) -> ProvenanceRecord:
+        """A rejected, audio-less provenance row for a range-guard drop (FR-005)."""
+        return ProvenanceRecord(
+            sample_id=f"{drop.base_score_id}__{drop.transform}",
+            score_id=f"{drop.base_score_id}__{drop.transform}",
+            score_path="",
+            audio_path="",
+            lane="score_augmentation",
+            voice_id="",
+            seed=drop.seed,
+            config_hash=self.config_hash,
+            verdict=ValidationVerdict(status=VerdictStatus.REJECTED, reason=drop.reason),
+            base_score_id=drop.base_score_id,
+            score_aug_profile=drop.profile_id,
+            score_aug_axis=drop.axis.value,
+            score_aug_transform=drop.transform,
+            score_aug_seed=drop.seed,
+        )
 
     @staticmethod
     def _tally(summary: RunSummary, record: ProvenanceRecord) -> None:
@@ -209,6 +282,13 @@ class Orchestrator:
             consent_verified=voice.consent_verified,
             config_hash=self.config_hash,
             verdict=verdict,
+            # Keep an audio-augmented variant in its score-augmentation subtree (FR-016).
+            base_score_id=base.base_score_id,
+            score_aug_profile=base.score_aug_profile,
+            score_aug_axis=base.score_aug_axis,
+            score_aug_transform=base.score_aug_transform,
+            score_aug_seed=base.score_aug_seed,
+            dynamics_applied=base.dynamics_applied,
         )
         record = self.store.write_sample(record, audio, score_tsv, index)
         manifest.append(record)
@@ -225,6 +305,7 @@ class Orchestrator:
         options: dict[str, object],
         index: int,
         manifest: ManifestWriter,
+        variant: ScoreVariant | None = None,
     ) -> tuple[ProvenanceRecord, RenderResult | None]:
         sample_id = f"{ps.score.score_id}_singer_{voice.voice_id}"
         if lane_name != "deterministic":
@@ -247,6 +328,7 @@ class Orchestrator:
                 consent_verified=voice.consent_verified,
                 config_hash=self.config_hash,
                 verdict=ValidationVerdict(status=VerdictStatus.LICENSE_REFUSED, reason=str(exc)),
+                **self._aug_lineage(variant),
             )
             manifest.append(record)
             return record, None
@@ -279,6 +361,7 @@ class Orchestrator:
         else:
             score_tsv = serialize_score(result.label_score)
 
+        dynamics_applied = bool(result.notes.get("dynamics_applied", False))
         record = ProvenanceRecord(
             sample_id=sample_id,
             score_id=ps.score.score_id,
@@ -292,6 +375,7 @@ class Orchestrator:
             config_hash=self.config_hash,
             verdict=verdict,
             notes=result.notes,
+            **self._aug_lineage(variant, dynamics_applied=dynamics_applied),
         )
         record = self.store.write_sample(record, result.audio, score_tsv, index)
         manifest.append(record)

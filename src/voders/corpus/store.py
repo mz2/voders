@@ -46,12 +46,20 @@ class CorpusStore:
         return d
 
     def paths_for(self, record: ProvenanceRecord, index: int) -> tuple[Path, Path]:
-        """Return (audio_path, score_path) for a sample given its accept/reject status."""
+        """Return (audio_path, score_path) for a sample given its accept/reject status.
+
+        Originals keep their exact ``corpus/``/``rejected/`` location (SC-001 backstop). A
+        score-augmentation variant (``score_aug_axis`` set) is foldered under
+        ``<corpus|rejected>/augmented/<axis>/`` so variants never collide with or co-mingle with
+        originals (FR-016, SC-009).
+        """
         base = (
             self.corpus_dir
             if record.verdict.status == VerdictStatus.ACCEPTED
             else self.rejected_dir
         )
+        if record.score_aug_axis:
+            base = base / "augmented" / record.score_aug_axis
         shard = self._shard_dir(base, index)
         return shard / f"{record.sample_id}.wav", shard / f"{record.sample_id}.tsv"
 

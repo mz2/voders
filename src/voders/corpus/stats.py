@@ -45,6 +45,7 @@ def build_stats(manifest_path: str | Path) -> dict[str, Any]:
 
     timbre_identities = {(r.voice_id, r.augmentation_profile or "") for r in accepted}
     augmented = [r for r in accepted if r.augmentation_profile]
+    score_augmentation = _score_augmentation_block(accepted)
 
     pitches: list[float] = []
     durations: list[float] = []
@@ -61,8 +62,30 @@ def build_stats(manifest_path: str | Path) -> dict[str, Any]:
         "unique_voices": len({r.voice_id for r in accepted}),
         "timbre_identities": len(timbre_identities),
         "augmentation_coverage": (len(augmented) / len(accepted)) if accepted else 0.0,
+        "score_augmentation": score_augmentation,
         "pitch_distribution": _distribution(pitches),
         "duration_ms_distribution": _distribution([d * 1000.0 for d in durations]),
+    }
+
+
+def _score_augmentation_block(accepted: list[ProvenanceRecord]) -> dict[str, Any]:
+    """Score-augmentation coverage axis over accepted records (FR-012, SC-007).
+
+    ``originals`` are accepted records that are not score-augmentation variants (``base_score_id``
+    unset); ``variants`` carry a ``base_score_id``. ``effective_multiplier`` is accepted-total over
+    accepted-originals (≈ variants × voices × audio-profiles).
+    """
+    variants = [r for r in accepted if r.base_score_id]
+    originals = [r for r in accepted if not r.base_score_id]
+    by_transform: dict[str, int] = {}
+    for r in variants:
+        key = r.score_aug_transform or "?"
+        by_transform[key] = by_transform.get(key, 0) + 1
+    return {
+        "enabled": bool(variants),
+        "variant_share": (len(variants) / len(accepted)) if accepted else 0.0,
+        "by_transform": by_transform,
+        "effective_multiplier": (len(accepted) / len(originals)) if originals else 0.0,
     }
 
 

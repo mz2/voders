@@ -1,0 +1,55 @@
+# Score-augmentation smoke config — deterministic lane, CPU, laptop-runnable (feature 003).
+# Enables all three score-domain augmentation axes through one profile so a single run exercises
+# transposition, time humanisation, and per-note volume. Originals land in corpus/; variants in
+# corpus/augmented/<axis>/. Shares its master_seed with score-aug-off.yaml for the SC-001 control.
+run_id: score-aug-smoke
+master_seed: 20260627
+
+scores: evals/fixtures/scores/*.tsv
+output_root: out/score-aug-smoke
+
+voices:
+  - voice_id: donor_ah_synth
+    kind: deterministic_donor
+    license: "CC0 synthetic vowel"
+    consent_verified: true
+    model_ref: evals/fixtures/voices/donor_ah_synth.wav
+
+lanes:
+  deterministic:
+    enabled: true
+    synth: world
+
+score_augmentation:
+  - profile_id: all-axes
+    transpose:
+      offsets: [-12, 12]
+      policy: drop
+      window: [0, 127]
+    humanize_time:
+      onset_sigma_s: 0.02
+      duration_sigma_s: 0.02
+      max_dev_s: 0.05
+      draws: 2
+      overlap: forbid
+      min_dur_s: 0.01
+    volume:
+      gain_db_range: [-6.0, 6.0]
+      distribution: uniform
+
+validator:
+  onset_ms: 50
+  offset_min_ms: 50
+  offset_fraction: 0.20
+  min_note_ms: 300
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0
+
+reproduction:
+  deterministic: bit_exact
+  neural:
+    same_verdict: true
+    f0_cents: 25
+    onset_ms: 10
