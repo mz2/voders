@@ -136,9 +136,16 @@ flowchart LR
 voice model* for a specific singer (an RVC `.pth`, an NNSVS/DiffSinger voicebank) — large external
 assets, and exactly what the consent gate (FR-011, SC-008) governs, so the repo bundles none.
 `just download-rvc-models` fetches the RVC **base** models (HuBERT + RMVPE feature extractors — not
-a cloned voice); a target singer model is supplied per voice via its `model_ref`. The CPU backends
-(`backend: world` / `backend: cpu`) reproduce each lane's contract without a GPU or external
-weights, so the whole pipeline and its evaluation run on a laptop.
+a cloned voice). For a *consented* target singer, `just download-rvc-voice` fetches an
+Apache-2.0-licensed RVC model trained on **VCTK** speaker p231 (the VCTK dataset is CC BY 4.0; its
+speakers consented to open release) — a license-clean alternative to scraped celebrity clones. Point
+a voice's `model_ref` at `models/rvc/voices/Fp231rmvpe.pth` and use `backend: rvc`.
+
+Running RVC needs its backend project synced (`just setup-rvc-backend`); it pins **Python 3.10**
+because RVC's HuBERT extractor pulls in `fairseq`, which Python 3.11+ rejects — isolating that in
+its own uv project is why the 3.14 core is unaffected. The CPU backends (`backend: world` /
+`backend: cpu`) reproduce each lane's contract without a GPU or external weights, so the whole
+pipeline and its evaluation run on a laptop.
 
 ## Reproducibility
 

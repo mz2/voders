@@ -15,15 +15,23 @@ import sys
 import urllib.request
 from pathlib import Path
 
+# Each entry is (destination path under models/, download URL).
+_HF_RVC_BASE = "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main"
+_HF_VCTK = "https://huggingface.co/Nekochu/RVC-VCTK_Voice-sample/resolve/main"
+
 MODELS = {
+    # RVC base/foundation models (feature extractors, not a cloned voice).
     "rvc": [
+        ("rvc/hubert_base.pt", f"{_HF_RVC_BASE}/hubert_base.pt"),
+        ("rvc/rmvpe.pt", f"{_HF_RVC_BASE}/rmvpe.pt"),
+    ],
+    # A consented target voice: VCTK speaker p231 (female). The model repo is Apache-2.0 and VCTK
+    # is CC BY 4.0 (speakers consented to open release) — a defensible, license-clean target.
+    "vctk-p231": [
+        ("rvc/voices/Fp231rmvpe.pth", f"{_HF_VCTK}/F/p231/rmvpe/Fp231rmvpe.pth"),
         (
-            "hubert_base.pt",
-            "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/hubert_base.pt",
-        ),
-        (
-            "rmvpe.pt",
-            "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/rmvpe.pt",
+            "rvc/voices/Fp231rmvpe.index",
+            f"{_HF_VCTK}/F/p231/rmvpe/added_IVF1216_Flat_nprobe_1_Fp231rmvpe_v2.index",
         ),
     ],
 }
@@ -52,14 +60,14 @@ def _download(url: str, dest: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-    which = args or list(MODELS)
+    which = args or ["rvc"]
     for group in which:
         if group not in MODELS:
             print(f"unknown model group {group!r}; known: {sorted(MODELS)}")
             return 2
-        print(f"== {group} base models -> {MODELS_ROOT / group} ==")
-        for name, url in MODELS[group]:
-            _download(url, MODELS_ROOT / group / name)
+        print(f"== {group} -> {MODELS_ROOT} ==")
+        for relpath, url in MODELS[group]:
+            _download(url, MODELS_ROOT / relpath)
     return 0
 
 

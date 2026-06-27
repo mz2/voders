@@ -6,9 +6,11 @@ build-backend = "setuptools.build_meta"
 name = "voders-rvc-backend"
 version = "0.1.0"
 description = "Out-of-process RVC voice-conversion backend for voders (separate dependency chain)"
-# rvc-python pins numpy/deps with no Python 3.14 wheels, so this backend pins 3.11 and the 3.14
-# core talks to it across a process boundary (src/voders/render/backend_bridge.py).
-requires-python = ">=3.11,<3.12"
+# rvc-python depends on fairseq, whose mutable dataclass defaults are rejected by Python 3.11+
+# (ValueError: mutable default ... use default_factory). fairseq is unmaintained, so this backend
+# pins Python 3.10, where it imports. The 3.14 core talks to it across a process boundary
+# (src/voders/render/backend_bridge.py) — which is exactly why the backend is its own uv project.
+requires-python = ">=3.10,<3.11"
 dependencies = [
     "rvc-python>=0.0.6",
     "soundfile>=0.12",
