@@ -56,4 +56,5 @@ class ProvenanceRecord(BaseModel):
     lyric_model: str | None = None
     lyric_model_license: str | None = None
     lyric_articulated: bool = False
+    lyric_multisyllable_supplied: int = 0
     notes: dict[str, object] = Field(default_factory=dict)

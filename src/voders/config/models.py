@@ -69,6 +69,7 @@ class LyricsConfig(BaseModel):
     source: LyricSource = LyricSource.VOWEL
     inventory: str = "en_cv"
     g2p_backend: str = "espeak"
+    syllabifier: str = "en_rule"
     melisma: str = "per_note"
     theme: str | None = None
     model: LyricModel | None = None
