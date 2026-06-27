@@ -234,3 +234,6 @@ __marimo__/
 
 # Cloned third-party backend repos (fetched at runtime, not part of this repo).
 /backends/*/seed-vc/
+
+# Staged trainer input dir (assembled from datasets/ by `just train`)
+syntheticdataset_soulx/
