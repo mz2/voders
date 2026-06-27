@@ -34,6 +34,29 @@ class ValidationVerdict(BaseModel):
         return self.status == VerdictStatus.ACCEPTED
 
 
+class AccompanimentProvenance(BaseModel):
+    """Accompaniment-stage provenance; present iff ``lane == "accompaniment"`` (FR-007, FR-006a).
+
+    Contract: contracts/manifest-accompaniment.md. ``vocal_bit_exact`` and ``stem_available`` are
+    both true only for Lego mode (Complete re-encodes the vocal and emits no separable stem).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str  # "lego" | "complete"
+    model_id: str
+    model_version: str = ""
+    model_license: str = ""
+    attribution_text: str | None = None  # required for CC-BY-class models (FR-006a)
+    vocal_bit_exact: bool = False
+    source_vocal_sample_id: str = ""
+    takes_tried: int = 1
+    max_note_shift_ms: float = 0.0  # measured note displacement on the mix (FR-012, SC-005)
+    free_time: bool = False
+    target_instrument: str = ""
+    stem_available: bool = False
+
+
 class ProvenanceRecord(BaseModel):
     """One line of ``manifest.jsonl`` — provenance for one attempted sample (FR-008, FR-006a)."""
 
@@ -57,4 +80,5 @@ class ProvenanceRecord(BaseModel):
     lyric_model_license: str | None = None
     lyric_articulated: bool = False
     lyric_multisyllable_supplied: int = 0
+    accompaniment: AccompanimentProvenance | None = None
     notes: dict[str, object] = Field(default_factory=dict)

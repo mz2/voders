@@ -101,6 +101,31 @@ just run config=evals/fixtures/lyrics-svs.yaml     # svs lane articulates the sy
 
 GPU paths (real LLM generation, neural G2P) have opt-in tests: with the gpu extras synced, run
 `uv run pytest -m gpu`. The default suite stays CPU-only so the no-GPU baseline guarantees hold.
+### Accompaniment stage (spec 002)
+
+An optional post-acceptance stage lays instrumental backing under an accepted vocal **without moving
+the sung-note timing**, so the score still labels the result. Two modes: **lego** (vocal-preserving —
+a generated accompaniment "stem" summed under the untouched vocal; the vocal stays bit-exact and the
+stem is kept for re-mixing) and **complete** (one-pass full mix, mild vocal coloration). Admission is
+decided on the final mix. Enable it via the `accompaniment` lane in a run config. The CPU **fake** backend runs in CI:
+
+```bash
+uv run voders run  --config evals/fixtures/accompaniment-smoke.yaml   # fake backend, no GPU
+uv run voders eval --manifest out/accompaniment_smoke/manifest.jsonl  # SC-001/002/004/005/008
+```
+
+The real **ACE-Step** backend (`ACE-Step/ACE-Step-v1-3.5B`, Apache-2.0) runs on GPU. It can't share
+this project's environment (conflicting pins, no Python 3.14 / aarch64 wheels), so — like the SVS /
+RVC / Seed-VC backends — it lives as a standalone uv project under `backends/acestep/` and is invoked
+out-of-process. Set it up and run an end-to-end demo with the task runner:
+
+```bash
+just setup-acestep-backend   # uv sync --project backends/acestep
+just setup-accomp            # Demucs for Lego separation (uv sync --extra cpu --extra accomp)
+just demo-acestep            # real ACE-Step accompaniment on a fixture vocal, then eval
+```
+
+See `specs/002-vocal-conditioned-accompaniment/quickstart.md`.
 
 ## Quickstart
 
@@ -118,12 +143,38 @@ just run config=evals/fixtures/smoke.yaml   # render a corpus from a run config
 just eval                              # evaluate against the Success Criteria (non-zero on failure)
 just audit                             # license/consent audit
 just stats                             # aggregate corpus statistics
+just splits                            # source-stratified train/val splits (issue #7)
 ```
 
 `just run` writes under `out/<run_id>/`: `config.resolved.yaml` (the resolved end-result record),
 `manifest.jsonl` (one provenance row per attempted sample), `stats.json`, `corpus/` (accepted
 `wav`+`tsv` pairs), `rejected/` (non-accepted samples, never trained on), and `checkpoints/`. The
 `out/` tree is git-ignored — generated corpora are never committed.
+
+## Consuming the corpus (for training)
+
+If you're training a transcription model on the output, here's what you need:
+
+**Layout.** Train on `corpus/` only — `corpus/**/*.wav` each has a sibling `.tsv` (the label,
+byte-identical to the driving score: `onset_s  offset_s  pitch_midi`). `rejected/` holds samples the
+validator gated out; never train on it. Audio is 22,050 Hz mono float32.
+
+**Provenance.** `manifest.jsonl` is one JSON row per attempted sample with its `sample_id`,
+`lane`, `voice_id`, `augmentation_profile`, `seed`, license/consent, and the `verdict`. `stats.json`
+summarises totals, unique scores/voices, timbre identities, and pitch/duration distributions.
+
+**Splits.** `just splits` (`voders splits`) writes `splits.json` with train/val lists
+**stratified by source** (lane/voice/augmentation profile) and deterministic in `--seed`, so every
+generator is represented on both sides and you can attribute errors to specific sources.
+
+**Quality — what to expect.** The validator gates every sample on onset (50 ms), offset, and f0
+(±25 cents over ≥80% of each note), so labels are correct by construction. Against the actual
+downstream model, `just basic-pitch-eval` runs **Basic Pitch** on the rendered audio and scores
+note-F1 (COnP: onset 50 ms, pitch 50 cents) vs the labels, broken down by verdict status and by
+source. Measured on the fixtures (small n — directional, re-run at scale): accepted lanes **0.80–1.00**
+(NNSVS 1.0, synthetic donor 0.94, VocalSet donor 0.87, RVC 0.80); rejected samples **~0.48–0.57**.
+So the gate is a genuine quality filter; the ±25-cent threshold is calibrated against the consumer
+(see `research.md` Decision 9). Use `basic-pitch-eval`'s per-source breakdown to spot weak generators.
 
 ## Running tests / development
 
@@ -178,11 +229,79 @@ flowchart LR
 and **VCTK** (both CC BY 4.0) into git-ignored `models/donors/`; `just demo-real-donor` renders the
 deterministic lane with a real human vowel instead of the synthetic fixture.
 
+**Record your own donor vowel.** `just record-donor <voice-id> FILE=take.wav` imports an existing
+WAV, or `just record-donor <voice-id> RECORD=1` captures a sustained vowel from the microphone (the
+`record` extra pulls in `sounddevice`). Either way it isolates the steady portion, normalizes,
+resamples to 22,050 Hz mono float32, validates the take (voiced, low noise), prompts for your
+consent, writes the WAV under git-ignored `models/donors/`, and prints a ready-to-paste `Voice`
+entry (`kind: deterministic_donor`, `consent_verified: true`). Because you record and consent
+yourself, the consent gate (FR-011, SC-008) is satisfied by construction — one ~3 s vowel is enough
+for the WORLD/RVC base render. Paste the printed entry under `voices:` in your run config.
+
+**Fetch permissive donor vowels from Freesound.** `just download-freesound` searches
+[Freesound](https://freesound.org) for short sung/sustained vowels under a permissive license (CC0
+by default — no attribution required), downloads the HQ preview, resamples to 22,050 Hz mono float32,
+rejects clips that aren't clearly voiced, and writes donor WAVs under git-ignored
+`models/donors/freesound/`. Set `FREESOUND_API_TOKEN` first (get one at
+<https://freesound.org/apiv2/apply/>). Tune the search with
+`just download-freesound QUERY="sung vowel" COUNT=5 LICENSE=cc0` (use `LICENSE=by` for CC BY, whose
+attribution is recorded in `ATTRIBUTION.txt`). Each fetched sound prints a ready-to-paste `Voice`
+entry. Run `just list-donors` to see everything fetched/enrolled under `models/donors/` with its
+license and attribution.
+
+### Unified data-augmentation pipeline
+
+The donor enrollment methods above are the *data sources*; `just augment` runs them all into one
+augmented corpus. It is what the `data-augmentation` GitHub Action runs (manual dispatch or on a
+published release).
+
+```bash
+just augment                 # all sources -> unified pool -> render -> augment -> audit -> eval -> stats
+just augment FREESOUND_COUNT=10   # fetch more Freesound donors this run
+just build-pool              # only (re)generate the pool config from donors on disk
+just train                   # stub: trains on the augmented corpus manifest (wire in a real trainer)
+```
+
+**Every data source is used.** `augment` enrolls donors from all four methods —
+synthetic fixtures (`evals/fixtures/voices/`), VocalSet/VCTK (`just download-donors`), Freesound
+(`just download-freesound`), and any mic recordings (`just record-donor`) already on disk — then
+`evals/build_donor_pool.py` discovers every one of them and writes a single unified run config,
+`evals/fixtures/donor_pool.yaml` (committed for review; regenerated each run so newly fetched/recorded
+donors join automatically). The fetch steps are best-effort, so the pipeline still runs offline on
+the checked-in donors. `just list-donors` prints the current pool with licenses/attribution.
+
+**Which synthesis methods run.** voders routes each voice to a lane by its `kind`
+(`src/voders/corpus/orchestrator.py`), so the donor-vowel pool (`kind: deterministic_donor`) is sung
+by the **deterministic (WORLD)** lane, and every accepted base render is then fanned through the
+label-preserving **augmentation** profiles (`room_reverb`, `phone_codec`, `noisy_room`) — that is the
+augmentation multiplier (FR-005). The **svs** (NNSVS) and **voice_conversion** (RVC) lanes consume
+voices of kind `svs_voicebank` / `voice_conversion` plus their own out-of-process backends and
+consented models, so they are exercised by the dedicated `just demo-svs-nnsvs`, `just demo-rvc`, and
+`just demo-seedvc` recipes rather than the donor-vowel pool (a donor vowel can serve as a Seed-VC
+*reference*, which `demo-seedvc` shows).
+
+**Where the augmented data is output.** `just augment` writes everything under **`out/donor_pool/`**
+(git-ignored — generated corpora are never committed):
+
+| Path | Contents |
+| --- | --- |
+| `out/donor_pool/corpus/` | accepted samples — paired `*.wav` (22,050 Hz mono float32) + `*.tsv` labels; **this is the augmented training set** |
+| `out/donor_pool/manifest.jsonl` | one provenance row per attempted sample (lane, voice, seed, license, augmentation profile, verdict) — what `just train` consumes |
+| `out/donor_pool/rejected/` | samples that failed the validator (quarantined, never trained on) |
+| `out/donor_pool/stats.json` | aggregate stats (counts, timbre identities, augmentation coverage, pitch/duration distributions) |
+| `out/donor_pool/config.resolved.yaml` | the resolved run config (hashed into the manifest for replay) |
+
 **Zero-shot voice conversion (modern, no per-voice training).** `just demo-seedvc` runs **Seed-VC**
 (diffusion zero-shot VC) out-of-process (`backends/seedvc`, Python 3.10): the target voice is just a
 reference clip (a consented donor), no `.pth`. It keeps the source pitch (`--f0-condition`), so the
 labels are preserved. Other modern methods in scope (research.md Decision 8): kNN-VC, BigVGAN/Vocos
 vocoders, DiffSinger/TCSinger SVS.
+
+**Neural vocoder (experimental).** The deterministic lane accepts `vocoder: vocos` to re-vocode the
+WORLD output through Vocos (`just demo-vocos`). Empirically the plain mel Vocos model is not
+f0-conditioned and detunes past the ±25-cent tolerance, so the alignment gate rejects it — the
+gate working as designed. The lesson recorded in the code: an **f0-conditioned** vocoder
+(BigVGAN-f0 / NSF) is the alignment-safe route to neural-vocoder realism.
 
 **Trained voice models need consented weights.** RVC needs a *trained voice model* for a specific
 singer (an RVC `.pth`) — large external assets, and exactly what the consent gate (FR-011, SC-008)

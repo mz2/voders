@@ -53,6 +53,7 @@ class Orchestrator:
         *,
         timing: TimingRegistry | None = None,
         augmentor: Augmentor | None = None,
+        accompanist: object | None = None,
     ) -> None:
         self.config = config
         self.lanes = lanes
@@ -60,6 +61,7 @@ class Orchestrator:
         self.voices = VoiceRegistry(config.voices)
         self.timing = timing or self._default_timing(config, lanes)
         self.augmentor = augmentor
+        self.accompanist = accompanist
         self.config_hash = config_hash(config)
         self._lyric_source = self._build_lyric_source(config)
 
@@ -209,7 +211,73 @@ class Orchestrator:
                                 self._tally(summary, aug_record)
                                 self.store.mark_completed(aug_record.sample_id)
                                 index += 1
+
+                        # spec 002: lay accompaniment under an accepted vocal (corpus-internal).
+                        if (
+                            self.accompanist is not None
+                            and result is not None
+                            and record.verdict.status == VerdictStatus.ACCEPTED
+                        ):
+                            acc_record = self._accompany(
+                                base=record,
+                                result=result,
+                                ps=ps,
+                                voice=voice,
+                                index=index,
+                                manifest=manifest,
+                            )
+                            self._tally(summary, acc_record)
+                            self.store.mark_completed(acc_record.sample_id)
+                            index += 1
         return summary
+
+    def _accompany(
+        self,
+        *,
+        base: ProvenanceRecord,
+        result: RenderResult,
+        ps: ParsedScore,
+        voice: Voice,
+        index: int,
+        manifest: ManifestWriter,
+    ) -> ProvenanceRecord:
+        """Lay accompaniment under an accepted base render and write the new sample (spec 002)."""
+        acc = self.accompanist
+        assert acc is not None
+        mode = acc.options.mode
+        sample_id = f"{base.sample_id}_accomp_{mode}"
+        base_seed = sample_seed(
+            self.config.master_seed, ps.score.score_id, voice.voice_id, f"accompaniment_{mode}"
+        )
+        out = acc.generate(
+            result.audio,
+            result.label_score,
+            source_vocal_sample_id=base.sample_id,
+            base_seed=base_seed,
+        )
+        # Labels are unchanged (the score still describes the mix): keep the byte-identical .tsv.
+        score_tsv = (
+            ps.raw_bytes if result.label_score == ps.score else serialize_score(result.label_score)
+        )
+        record = ProvenanceRecord(
+            sample_id=sample_id,
+            score_id=ps.score.score_id,
+            score_path="",
+            audio_path="",
+            lane="accompaniment",
+            voice_id=voice.voice_id,
+            seed=base_seed,
+            voice_license=voice.license,
+            consent_verified=voice.consent_verified,
+            config_hash=self.config_hash,
+            verdict=out.verdict,
+            accompaniment=out.provenance,
+        )
+        record = self.store.write_accompaniment_sample(
+            record, out.mix, score_tsv, index, stem=out.stem
+        )
+        manifest.append(record)
+        return record
 
     @staticmethod
     def _tally(summary: RunSummary, record: ProvenanceRecord) -> None:

@@ -74,6 +74,28 @@ class CorpusStore:
             }
         )
 
+    def write_accompaniment_sample(
+        self,
+        record: ProvenanceRecord,
+        mix: np.ndarray,
+        score_tsv: bytes,
+        index: int,
+        *,
+        stem: np.ndarray | None = None,
+    ) -> ProvenanceRecord:
+        """Write the accompaniment mix (+ optional stem) and byte-identical score (FR-015).
+
+        The mix is the corpus audio (``{sample_id}.wav``); the Lego accompaniment stem, when
+        present, is written alongside as ``{sample_id}.stem.wav`` so the sample can be re-mixed at a
+        different vocal/accompaniment balance without regenerating (SC-008).
+        """
+        record = self.write_sample(record, mix, score_tsv, index)
+        if stem is not None:
+            audio_path, _ = self.paths_for(record, index)
+            stem_path = audio_path.with_suffix(".stem.wav")
+            write_wav(stem_path, stem)
+        return record
+
     # --- checkpoint / resume (SC-011) ---
 
     def _checkpoint_path(self) -> Path:

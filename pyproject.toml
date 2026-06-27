@@ -28,11 +28,22 @@ cpu = [
     # pyworld 0.3.5 imports the (deprecated) pkg_resources at module load.
     "setuptools<81",
 ]
-# GPU lanes (neural SVS, voice conversion). Imported lazily so the CPU baseline is unaffected.
+# GPU lanes (neural SVS, voice conversion) + neural vocoder. Imported lazily so the CPU baseline
+# is unaffected.
 gpu = [
     "torch>=2.12",
     "torchaudio",
     "torchcrepe>=0.0.24",
+    "vocos>=0.1",  # modern neural mel-vocoder for the deterministic lane's `vocoder: vocos` option
+]
+# Vocal-conditioned accompaniment (spec 002). GPU; imported lazily so the CPU baseline / fake
+# backend stay torch-free (FR-009). `demucs` is the source separator used to extract the
+# accompaniment stem in Lego mode. The ACE-Step 1.5 XL inference package is installed out-of-band
+# (package name / Python 3.14 wheel pending verification — research.md open item 3).
+accomp = [
+    "torch>=2.12",
+    "torchaudio",
+    "demucs>=4.0",
 ]
 dev = [
     "ruff>=0.15",
@@ -56,6 +67,10 @@ lyrics = [
 lyrics-gpu = [
     "transformers>=4.44",
     "accelerate>=0.33",
+]
+# Microphone capture for `evals/record_donor.py --record`. Importing a WAV needs only the cpu extra.
+record = [
+    "sounddevice>=0.5",
 ]
 
 [project.scripts]
