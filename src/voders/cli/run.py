@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from voders.config.loader import load_config
 from voders.corpus.orchestrator import Orchestrator
-from voders.render.registry import build_augmentor, build_lanes
+from voders.render.registry import build_accompanist, build_augmentor, build_lanes
+from voders.validate.validator import Validator
 
 
 def run_command(
@@ -26,7 +27,8 @@ def run_command(
 
     lanes = build_lanes(config)
     augmentor = build_augmentor(config)
-    orchestrator = Orchestrator(config, lanes, augmentor=augmentor)
+    accompanist = build_accompanist(config, Validator(config.validator))
+    orchestrator = Orchestrator(config, lanes, augmentor=augmentor, accompanist=accompanist)
     summary = orchestrator.run(resume=resume)
 
     print(f"run {summary.run_id}: attempted={summary.attempted} accepted={summary.accepted}")

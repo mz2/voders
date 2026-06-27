@@ -206,6 +206,102 @@ def sc009_reproducibility(manifest_path: str, max_samples: int = 3) -> Criterion
     )
 
 
+# --- Accompaniment stage (spec 002) Success Criteria ---------------------------------------------
+# Distinct "ACC-" ids so the 001 SC-001..SC-010 above are untouched; descriptions cite the 002 SC.
+
+_NONCOMMERCIAL_LICENSE_MARKERS = ("-NC", "NONCOMMERCIAL", "NON-COMMERCIAL", "CC-BY-NC")
+
+
+def _accompaniment(records: Iterable[ProvenanceRecord]) -> list[ProvenanceRecord]:
+    return [r for r in records if r.lane == "accompaniment" and r.accompaniment is not None]
+
+
+def acc_sc001_bit_exact(records: list[ProvenanceRecord]) -> CriterionResult:
+    """002 SC-001: every accepted Lego sample keeps the vocal bit-exact (vocal-preserving)."""
+    lego = [r for r in _accepted(_accompaniment(records)) if r.accompaniment.mode == "lego"]
+    bad = [r for r in lego if not r.accompaniment.vocal_bit_exact]
+    return CriterionResult(
+        "ACC-001",
+        "002 SC-001: Lego accepted keep vocal bit-exact",
+        float(len(bad)),
+        0.0,
+        len(bad) == 0,
+        gated=len(lego) > 0,
+        detail=f"{len(bad)}/{len(lego)} lego not bit-exact",
+    )
+
+
+def acc_sc002_timing(records: list[ProvenanceRecord]) -> CriterionResult:
+    """002 SC-002: ≥99% of accepted Complete samples keep onset+offset within tolerance on mix."""
+    comp = [r for r in _accepted(_accompaniment(records)) if r.accompaniment.mode == "complete"]
+    ok = sum(1 for r in comp if r.verdict.onset_ok and r.verdict.offset_ok)
+    value = _fraction(ok, len(comp))
+    return CriterionResult(
+        "ACC-002",
+        "002 SC-002: Complete onset+offset within tol ≥99%",
+        value,
+        0.99,
+        value >= 0.99,
+        gated=len(comp) > 0,
+        detail=f"{ok}/{len(comp)} complete accepted",
+    )
+
+
+def acc_sc004_provenance(records: list[ProvenanceRecord]) -> CriterionResult:
+    """002 SC-004: complete provenance, no non-commercial license, CC-BY carries attribution."""
+    acc = _accepted(_accompaniment(records))
+    violations = 0
+    for r in acc:
+        a = r.accompaniment
+        complete = bool(a.model_id and a.model_license and a.mode and a.source_vocal_sample_id)
+        lic = a.model_license.upper()
+        noncommercial = any(m in lic for m in _NONCOMMERCIAL_LICENSE_MARKERS)
+        cc_by_needs_attr = lic.startswith("CC-BY") and not noncommercial and not a.attribution_text
+        if not complete or noncommercial or cc_by_needs_attr:
+            violations += 1
+    return CriterionResult(
+        "ACC-004",
+        "002 SC-004: provenance complete, license in policy, CC-BY attributed",
+        float(violations),
+        0.0,
+        violations == 0,
+        gated=len(acc) > 0,
+        detail=f"{violations}/{len(acc)} accepted with a provenance/license violation",
+    )
+
+
+def acc_sc005_note_shift(records: list[ProvenanceRecord]) -> CriterionResult:
+    """002 SC-005: no accepted sample's note shifted beyond the validator tolerance."""
+    from voders.constants import ONSET_TOLERANCE_MS
+
+    acc = _accepted(_accompaniment(records))
+    bad = [r for r in acc if r.accompaniment.max_note_shift_ms > ONSET_TOLERANCE_MS]
+    return CriterionResult(
+        "ACC-005",
+        "002 SC-005: zero note-timing shift beyond tolerance",
+        float(len(bad)),
+        0.0,
+        len(bad) == 0,
+        gated=len(acc) > 0,
+        detail=f"{len(bad)}/{len(acc)} accepted shifted > {ONSET_TOLERANCE_MS:.0f} ms",
+    )
+
+
+def acc_sc008_stems(records: list[ProvenanceRecord]) -> CriterionResult:
+    """002 SC-008: every accepted Lego sample retains a re-mixable stem."""
+    lego = [r for r in _accepted(_accompaniment(records)) if r.accompaniment.mode == "lego"]
+    bad = [r for r in lego if not r.accompaniment.stem_available]
+    return CriterionResult(
+        "ACC-008",
+        "002 SC-008: Lego accepted retain a re-mixable stem",
+        float(len(bad)),
+        0.0,
+        len(bad) == 0,
+        gated=len(lego) > 0,
+        detail=f"{len(bad)}/{len(lego)} lego without a stem",
+    )
+
+
 def evaluate(manifest_path: str, *, reproduce: bool = True) -> EvalReport:
     records = load_manifest(manifest_path)
     report = EvalReport()
@@ -216,6 +312,12 @@ def evaluate(manifest_path: str, *, reproduce: bool = True) -> EvalReport:
     report.add(sc004_timbre_identities(records))
     report.add(sc006_augmentation_coverage(records))
     report.add(sc010_rederived_onset(records))
+    # Accompaniment stage (spec 002) — gated only when accompaniment samples are present.
+    report.add(acc_sc001_bit_exact(records))
+    report.add(acc_sc002_timing(records))
+    report.add(acc_sc004_provenance(records))
+    report.add(acc_sc005_note_shift(records))
+    report.add(acc_sc008_stems(records))
     if reproduce:
         report.add(sc009_reproducibility(manifest_path))
     return report

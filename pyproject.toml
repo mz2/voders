@@ -34,6 +34,14 @@ gpu = [
     "torchaudio",
     "torchcrepe>=0.0.24",
 ]
+# Vocal-conditioned accompaniment (spec 002). GPU; imported lazily so the CPU baseline / fake
+# backend stay torch-free (FR-009). The ACE-Step 1.5 XL package and an optional demucs-class
+# separator are installed out-of-band (package name / Python 3.14 wheel pending verification —
+# research.md open item 3); `torchaudio` provides the 48 kHz↔22.05 kHz resample.
+accomp = [
+    "torch>=2.12",
+    "torchaudio",
+]
 dev = [
     "ruff>=0.15",
     "mypy>=2.1",

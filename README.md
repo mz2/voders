@@ -60,6 +60,20 @@ Each lane is enabled or disabled independently in the run config:
 The deterministic lane and validator run on a laptop CPU with no GPU. The neural lanes
 (`svs`, `voice_conversion`) use the `gpu` extra.
 
+### Accompaniment stage (spec 002)
+
+An optional post-acceptance stage lays instrumental backing under an accepted vocal **without moving
+the sung-note timing**, so the score still labels the result. Two modes: **lego** (vocal-preserving —
+a generated accompaniment "stem" summed under the untouched vocal; the vocal stays bit-exact and the
+stem is kept for re-mixing) and **complete** (one-pass full mix, mild vocal coloration). Admission is
+decided on the final mix. Enable it via the `accompaniment` lane in a run config; the CPU **fake**
+backend runs in CI, and the GPU **ACE-Step 1.5 XL** backend uses the `accomp` extra. Example:
+
+```bash
+uv run voders run  --config evals/fixtures/accompaniment-smoke.yaml   # fake backend, no GPU
+uv run voders eval --manifest out/accompaniment_smoke/manifest.jsonl  # SC-001/002/004/005/008
+```
+
 ## Quickstart
 
 Everything is driven by a [`just`](https://github.com/casey/just) task runner; each action goes
