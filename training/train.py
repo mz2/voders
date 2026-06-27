@@ -499,12 +499,16 @@ def main():
     )
     print(f"Test dataset: {len(test_dataset)} samples")
 
+    # num_workers=0: the test loader is iterated by trainer.test() only after fit()
+    # has fully initialized CUDA. Forking worker processes at that point (the old
+    # multiprocessing_context='fork') inherits a broken CUDA context and deadlocks
+    # at "STARTING TESTING". The test set is tiny (batch_size=1), so in-process
+    # loading costs nothing and sidesteps the fork-after-CUDA hazard entirely.
     test_loader = DataLoader(
         test_dataset,
         batch_size=1,
         shuffle=False,
-        num_workers=min(os.cpu_count() // 3, 4),
-        multiprocessing_context='fork',
+        num_workers=0,
     )
     print(f"Test batches: {len(test_loader)}")
 
