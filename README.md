@@ -74,10 +74,17 @@ uv run voders eval --manifest out/accompaniment_smoke/manifest.jsonl  # SC-001/0
 ```
 
 The real **ACE-Step** backend (`ACE-Step/ACE-Step-v1-3.5B`, Apache-2.0) runs on GPU. It can't share
-this project's environment (conflicting pins, no Python 3.14 / aarch64 wheels), so it lives as a
-standalone uv project under `tools/acestep/`; `cd tools/acestep && uv sync` builds it and the backend
-auto-detects it. Lego mode also uses Demucs from this project's `accomp` extra
-(`uv sync --extra accomp`). See `specs/002-vocal-conditioned-accompaniment/quickstart.md`.
+this project's environment (conflicting pins, no Python 3.14 / aarch64 wheels), so — like the SVS /
+RVC / Seed-VC backends — it lives as a standalone uv project under `backends/acestep/` and is invoked
+out-of-process. Set it up and run an end-to-end demo with the task runner:
+
+```bash
+just setup-acestep-backend   # uv sync --project backends/acestep
+just setup-accomp            # Demucs for Lego separation (uv sync --extra cpu --extra accomp)
+just demo-acestep            # real ACE-Step accompaniment on a fixture vocal, then eval
+```
+
+See `specs/002-vocal-conditioned-accompaniment/quickstart.md`.
 
 ## Quickstart
 

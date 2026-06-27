@@ -58,3 +58,44 @@ def test_snr_below_floor_quarantines_the_verdict() -> None:
 
     assert result.verdict.status == VerdictStatus.QUARANTINED
     assert math.isfinite(result.max_note_shift_ms)
+
+
+# --- vocal-preserving (Lego) timing re-judgement (research Decision 2) ---
+
+
+def _onset_reject() -> ValidationVerdict:
+    # Rejected purely on an on-mix onset-detection artifact; pitch coverage is fine.
+    return ValidationVerdict(
+        status=VerdictStatus.REJECTED,
+        onset_ok=False,
+        offset_ok=True,
+        f0_ok=True,
+        reason="note 0: onset off by 107 ms (> 50 ms)",
+        max_onset_dev_ms=107.0,
+    )
+
+
+def test_preserved_timing_admits_unmoved_vocal() -> None:
+    """Lego: a small measured shift overrides an on-mix onset-detection false reject."""
+    from voders.validate.mix import _preserved_timing_verdict
+
+    out = _preserved_timing_verdict(_onset_reject(), shift_ms=15.0, onset_tol_ms=50.0)
+    assert out.status == VerdictStatus.ACCEPTED
+    assert out.onset_ok and out.offset_ok
+
+
+def test_preserved_timing_keeps_reject_when_note_moved() -> None:
+    """Lego: a measured shift beyond tolerance keeps the rejection (the note really moved)."""
+    from voders.validate.mix import _preserved_timing_verdict
+
+    out = _preserved_timing_verdict(_onset_reject(), shift_ms=80.0, onset_tol_ms=50.0)
+    assert out.status == VerdictStatus.REJECTED
+
+
+def test_preserved_timing_keeps_reject_when_masked() -> None:
+    """Lego: a masked vocal (f0 coverage fails) stays rejected even with a small shift."""
+    from voders.validate.mix import _preserved_timing_verdict
+
+    masked = _onset_reject().model_copy(update={"f0_ok": False, "reason": "note 0: f0 in tune 10%"})
+    out = _preserved_timing_verdict(masked, shift_ms=10.0, onset_tol_ms=50.0)
+    assert out.status == VerdictStatus.REJECTED

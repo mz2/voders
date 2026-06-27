@@ -9,10 +9,11 @@ audio-to-audio path, conditioned on the vocal. Two modes:
 
 Why a subprocess: ACE-Step pins a stack (``soundfile==0.13.1`` / ``transformers`` / ``spacy`` /
 ``pytorch_lightning``) that conflicts with this project's deps and lacks Python 3.14 / aarch64
-wheels, so it cannot be a direct dependency. ACE-Step therefore runs in **its own environment**
-(``acestep_python``) driven by ``acestep_runner.py`` (subprocess); Demucs runs in this project's
-``accomp`` extra. The generator/separator are injectable callables so the orchestration — caption
-construction, 22.05↔48 kHz bridging, mode dispatch, length-fit — is unit-tested on CPU with fakes.
+wheels, so it cannot be a direct dependency. ACE-Step therefore lives in the standalone
+``backends/acestep`` uv project (like the SVS / RVC / Seed-VC backends) and the core invokes its
+``voders_acestep_backend.worker`` via ``uv run --project backends/acestep``; Demucs runs in this
+project's ``accomp`` extra. The generator/separator are injectable callables so the orchestration —
+caption construction, 22.05↔48 kHz bridging, mode dispatch, length-fit — is unit-tested on CPU.
 
 Hardware-verified on a DGX Spark (NVIDIA GB10, CUDA 13): the Demucs separation path and a real
 ACE-Step audio2audio generation both run on the GPU (research.md "Hardware verification").
@@ -73,45 +74,25 @@ def _to_native_stereo(vocal: np.ndarray, native_sr: int = _NATIVE_SR) -> np.ndar
     return np.stack([up, up], axis=-1)
 
 
-def _runner_path() -> str:
-    return os.path.join(os.path.dirname(__file__), "acestep_runner.py")
-
-
-def _discover_acestep_python() -> str | None:
-    """Locate the uv-managed ACE-Step env's python (``tools/acestep/.venv/bin/python``).
-
-    Walks up from this module to the repo root and checks for the standalone ACE-Step uv project's
-    interpreter, so a contributor who ran ``cd tools/acestep && uv sync`` needs no env var. The
-    ``VODERS_ACESTEP_PYTHON`` env var still overrides this.
-    """
-    here = os.path.dirname(os.path.abspath(__file__))
-    for _ in range(8):
-        candidate = os.path.join(here, "tools", "acestep", ".venv", "bin", "python")
-        if os.path.exists(candidate):
-            return candidate
-        parent = os.path.dirname(here)
-        if parent == here:
-            break
-        here = parent
-    return None
+_BACKEND_NAME = "acestep"
+_WORKER_MODULE = "voders_acestep_backend.worker"
 
 
 class _AceStepGenerator:
-    """Real ACE-Step adapter via subprocess into the ACE-Step environment.
+    """Real ACE-Step adapter via the standalone ``backends/acestep`` uv project.
 
-    ACE-Step (``ace_step`` v0.2.0, Apache-2.0) can't be a direct dependency of this project (pinned
+    ACE-Step (``ace_step`` v0.2.0, Apache-2.0) can't be a direct dependency of the 3.14 core (pinned
     ``soundfile==0.13.1`` / ``transformers`` / ``spacy`` conflict and lack Python 3.14 / aarch64
-    wheels). So generation runs in ACE-Step's own venv: this adapter writes the reference vocal + a
-    JSON spec, runs ``acestep_runner.py`` with that venv's Python (``acestep_python``), and reads
-    back the output wav. The runner call args were verified against the real
-    ``ACEStepPipeline.__call__`` signature.
+    wheels), so it lives in its own uv project like the SVS / RVC / Seed-VC backends. This adapter
+    writes the reference vocal + a JSON spec and runs ``uv run --project backends/acestep python -m
+    voders_acestep_backend.worker`` (a fresh Python 3.12 interpreter), then reads back the wav. The
+    worker call args were verified against the real ``ACEStepPipeline.__call__`` signature.
     """
 
     def __init__(
         self,
         model_id: str,
         *,
-        acestep_python: str,
         checkpoint_dir: str | None,
         device_id: int,
         cpu_offload: bool,
@@ -119,7 +100,6 @@ class _AceStepGenerator:
         timeout_s: float,
     ) -> None:
         self.model_id = model_id
-        self.acestep_python = acestep_python
         self.checkpoint_dir = checkpoint_dir
         self.device_id = device_id
         self.cpu_offload = cpu_offload
@@ -135,6 +115,9 @@ class _AceStepGenerator:
 
         import soundfile as sf
 
+        from voders.render.backend_bridge import backends_root
+
+        proj = backends_root() / _BACKEND_NAME
         # "Complete" holds the vocal in place (lower edit strength); "Lego" drifts further since
         # only its non-vocal stems are kept downstream after source separation.
         strength = 0.55 if self.mode == MODE_COMPLETE else 0.75
@@ -157,7 +140,7 @@ class _AceStepGenerator:
             with open(spec_path, "w", encoding="utf-8") as fh:
                 json.dump(spec, fh)
             subprocess.run(
-                [self.acestep_python, _runner_path(), spec_path],
+                ["uv", "run", "--project", str(proj), "python", "-m", _WORKER_MODULE, spec_path],
                 check=True,
                 timeout=self.timeout_s,
             )
@@ -204,11 +187,12 @@ class _DemucsSeparator:
 
 
 class AceStepBackend:
-    """Vocal-conditioned accompaniment via real ACE-Step (subprocess) + Demucs source separation.
+    """Vocal-conditioned accompaniment via real ACE-Step + Demucs source separation.
 
-    ACE-Step generation runs in its own environment (``acestep_python``); Demucs separation for Lego
-    runs in this project's ``accomp`` extra. ``acestep_python`` / ``checkpoint_dir`` default from
-    the ``VODERS_ACESTEP_PYTHON`` / ``VODERS_ACESTEP_CHECKPOINT`` env vars.
+    ACE-Step generation runs in the standalone ``backends/acestep`` uv project (synced with
+    ``just setup-acestep-backend`` / ``uv sync --project backends/acestep``), invoked out-of-process
+    like the other backends; Demucs separation for Lego runs in this project's ``accomp`` extra.
+    ``checkpoint_dir`` defaults from ``VODERS_ACESTEP_CHECKPOINT`` (else ACE-Step fetches weights).
     """
 
     name = "acestep"
@@ -221,7 +205,6 @@ class AceStepBackend:
         self,
         model_id: str = "ace-step-v1-3.5b",
         *,
-        acestep_python: str | None = None,
         checkpoint_dir: str | None = None,
         device_id: int = 0,
         cpu_offload: bool = False,
@@ -230,9 +213,6 @@ class AceStepBackend:
         separator: SeparatorFn | None = None,
     ) -> None:
         self.model_id = model_id or "ace-step-v1-3.5b"
-        self.acestep_python = (
-            acestep_python or os.environ.get("VODERS_ACESTEP_PYTHON") or _discover_acestep_python()
-        )
         self.checkpoint_dir = checkpoint_dir or os.environ.get("VODERS_ACESTEP_CHECKPOINT") or None
         self.device_id = device_id
         self.cpu_offload = cpu_offload
@@ -250,16 +230,19 @@ class AceStepBackend:
     def preflight(self, mode: str) -> str | None:
         """Return a skip reason if the backend can't run here, else None (FR-013).
 
-        Checks that the ACE-Step environment is configured/reachable and (for Lego) that a Demucs
-        separator is importable in this env, without loading any weights — so the run degrades
-        gracefully. Injected generators/separators (tests) skip the probe entirely.
+        Checks the ``backends/acestep`` uv project is synced (and, for Lego, that Demucs is
+        importable in this env), without loading any weights — so the run degrades gracefully.
+        Injected generators/separators (tests) skip the probe entirely.
         """
         if self._generator is not None and (mode == MODE_COMPLETE or self._separator is not None):
             return None
-        if not self.acestep_python:
-            return "ACE-Step env not configured — set VODERS_ACESTEP_PYTHON to its venv python"
-        if not os.path.exists(self.acestep_python):
-            return f"ACE-Step python not found at {self.acestep_python!r}"
+        from voders.render.backend_bridge import backend_available
+
+        if not backend_available(_BACKEND_NAME):
+            return (
+                "ACE-Step backend not synced — run `just setup-acestep-backend` "
+                "(uv sync --project backends/acestep)"
+            )
         if mode == MODE_LEGO:
             import importlib.util
 
@@ -270,11 +253,8 @@ class AceStepBackend:
     def _get_generator(self, mode: str) -> GeneratorFn:
         if self._generator is not None:
             return self._generator
-        if not self.acestep_python:
-            raise RuntimeError("ACE-Step env not configured (set VODERS_ACESTEP_PYTHON)")
         return _AceStepGenerator(
             self.model_id,
-            acestep_python=self.acestep_python,
             checkpoint_dir=self.checkpoint_dir,
             device_id=self.device_id,
             cpu_offload=self.cpu_offload,

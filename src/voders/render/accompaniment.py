@@ -176,10 +176,18 @@ class Accompanist:
         )
         best_fail: tuple[float, np.ndarray, np.ndarray | None, ValidationVerdict] | None = None
 
+        vocal_preserving = self.options.mode == MODE_LEGO
         for take in range(self.options.takes):
             seed = derive_seed(base_seed, "take", take)
             mix, stem, snr = self._one_take(vocal, score, seed)
-            mv = validate_on_mix(mix, score, self.validator, snr_db=snr, timing=self.timing)
+            mv = validate_on_mix(
+                mix,
+                score,
+                self.validator,
+                snr_db=snr,
+                vocal_preserving=vocal_preserving,
+                timing=self.timing,
+            )
             verdict, shift = mv.verdict, mv.max_note_shift_ms
             snr_key = -(snr if snr is not None else -1e9)  # higher SNR -> smaller key (tie-break)
             if verdict.status == VerdictStatus.ACCEPTED:

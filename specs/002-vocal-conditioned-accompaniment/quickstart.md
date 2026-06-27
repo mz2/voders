@@ -25,23 +25,25 @@ output dir. The smoke config uses `backend: fake` so it needs no GPU.
 ### Real ACE-Step backend (GPU)
 
 ACE-Step (`ACE-Step/ACE-Step-v1-3.5B`, Apache-2.0) pins deps that conflict with this project and lack
-Python 3.14 / aarch64 wheels, so it lives as a **standalone uv project** under `tools/acestep/`
-(Python 3.12, its own `uv.lock`) and the backend drives it via subprocess. Build it exactly like the
-rest of the project's uv envs:
+Python 3.14 / aarch64 wheels, so — exactly like the SVS / RVC / Seed-VC backends — it lives in a
+**standalone uv project** at `backends/acestep/` (Python 3.12, its own `uv.lock`) and the core invokes
+its worker out-of-process via `uv run --project backends/acestep`. Set it up with the project's task
+runner:
 
 ```bash
-cd tools/acestep && uv sync && cd -      # ACE-Step env (weights auto-download from HF on first run)
-uv sync --extra cpu --extra accomp       # Demucs (Lego separation) in this project's accomp extra
+just setup-acestep-backend     # uv sync --project backends/acestep  (the ACE-Step env)
+just setup-accomp              # uv sync --extra cpu --extra accomp   (Demucs for Lego separation)
+just demo-acestep              # real ACE-Step accompaniment on a fixture vocal, then eval
 ```
 
-That's it — the backend **auto-detects** `tools/acestep/.venv/bin/python`, so no env var is needed
-(override with `VODERS_ACESTEP_PYTHON` if you keep the ACE-Step env elsewhere). Weights cache to
-`~/.cache/ace-step`; set `VODERS_ACESTEP_CHECKPOINT` to pin a local checkpoint dir.
+Weights download from HuggingFace on first run (cache `~/.cache/ace-step`); set
+`VODERS_ACESTEP_CHECKPOINT` to pin a local checkpoint dir. The backend reports a graceful skip
+(FR-013) if `backends/acestep` isn't synced.
 
-> On a host whose torchaudio routes I/O through `torchcodec` without a matching FFmpeg, the runner
+> On a host whose torchaudio routes I/O through `torchcodec` without a matching FFmpeg, the worker
 > falls back to `soundfile` for audio load/save — no system FFmpeg needed.
 
-To use the real model, set `backend: acestep` in the run config (GPU required):
+To use the real model in your own config, set `backend: acestep` (GPU required):
 
 ```yaml
 lanes:

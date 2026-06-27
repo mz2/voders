@@ -170,7 +170,10 @@ def sc009_reproducibility(manifest_path: str, max_samples: int = 3) -> Criterion
 
     manifest = Path(manifest_path)
     config_path = manifest.parent / "config.resolved.yaml"
-    records = [r for r in _accepted(load_manifest(manifest_path)) if r.lane != "augmentation"]
+    # Exclude post-acceptance fan-out stages (augmentation + the neural accompaniment lane): they
+    # are reproduced under the same-verdict neural tier, not by a bit-exact renderer re-render.
+    _post_stages = {"augmentation", "accompaniment"}
+    records = [r for r in _accepted(load_manifest(manifest_path)) if r.lane not in _post_stages]
     if not config_path.exists() or not records:
         return CriterionResult(
             "SC-009",

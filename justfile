@@ -21,9 +21,17 @@ setup:
 setup-gpu:
     uv sync --extra cpu --extra gpu
 
+# Add the accompaniment GPU extra (Demucs, for Lego-mode source separation).
+setup-accomp:
+    uv sync --extra cpu --extra accomp
+
 # Prerequisite for the out-of-process NNSVS backend: sync its standalone uv project (Python 3.11).
 setup-backends:
     uv sync --project backends/svs
+
+# Sync the out-of-process ACE-Step accompaniment backend (its own uv project, Python 3.12).
+setup-acestep-backend:
+    uv sync --project backends/acestep
 
 # Generate the checked-in fixtures (scores + synthetic consented donor voices).
 fixtures: setup
@@ -113,6 +121,16 @@ smoke-gpu: setup-gpu
     uv run --extra cpu --extra gpu python evals/make_fixtures.py
     uv run --extra cpu --extra gpu voders run --config evals/fixtures/smoke_gpu.yaml
     uv run --extra cpu --extra gpu voders eval --manifest out/smoke_gpu/manifest.jsonl
+
+# Lay accompaniment under the deterministic vocals with the CPU fake backend, then evaluate.
+accompaniment-smoke: setup
+    uv run voders run --config evals/fixtures/accompaniment-smoke.yaml
+    uv run voders eval --manifest out/accompaniment_smoke/manifest.jsonl
+
+# Real ACE-Step accompaniment on a vocal fixture (GPU; downloads ACE-Step weights on first run).
+demo-acestep: setup-accomp setup-acestep-backend
+    uv run --extra cpu --extra accomp voders run --config evals/fixtures/accompaniment_acestep.yaml
+    uv run --extra cpu --extra accomp voders eval --manifest out/accompaniment_acestep/manifest.jsonl
 
 # Everything CI checks: lint, type, tests.
 check: lint test

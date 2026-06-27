@@ -1,19 +1,14 @@
-"""Standalone ACE-Step inference runner — executed INSIDE the ACE-Step environment.
+"""ACE-Step accompaniment worker — invoked by the 3.14 core across a process boundary.
 
-ACE-Step (real package ``ace_step`` v0.2.0, Apache-2.0) pins a stack (``soundfile==0.13.1``,
-``transformers==4.50``, ``spacy``, ``pytorch_lightning``) that conflicts with this project's deps
-and has no Python 3.14 / aarch64 wheels, so it cannot be a direct dependency. Instead the
-accompaniment backend invokes this script with the ACE-Step venv's Python (subprocess), with a JSON
-spec.
+ACE-Step (real package ``ace_step`` v0.2.0, Apache-2.0) pins a stack that conflicts with the 3.14
+core and has no Python 3.14 / aarch64 wheels, so it runs here in this backend's Python 3.12 env. The
+core calls ``uv run --project backends/acestep python -m voders_acestep_backend.worker <spec.json>``
+and reads back the written wav (the same out-of-process pattern as the SVS / RVC / Seed-VC workers).
 
-This file imports ONLY ACE-Step + stdlib + soundfile (no ``voders`` imports), so it runs in the
-foreign environment. Contract:
-
-    python acestep_runner.py <spec.json>
-
-``spec.json`` keys: ``ref`` (reference vocal wav), ``out`` (output wav to write), ``prompt`` (tags),
-``seed`` (int), ``duration`` (s), ``strength`` (audio2audio edit strength), ``checkpoint_dir`` (or
-""), ``device_id`` (int), ``cpu_offload`` (bool), ``infer_step`` (int), ``guidance_scale`` (float).
+Protocol:
+  argv[1] = JSON spec {"ref", "out", "prompt", "seed", "duration", "strength", "checkpoint_dir",
+                       "device_id", "cpu_offload", "infer_step", "guidance_scale"}
+  On success: writes ``out`` (48 kHz stereo wav) and exits 0.
 """
 
 from __future__ import annotations
@@ -24,19 +19,13 @@ import os
 import shutil
 import sys
 
-# This script lives beside ``acestep.py`` (the voders backend). Running it directly puts this
-# directory on ``sys.path[0]``, which would shadow the installed ``acestep`` package with that
-# sibling module — so drop our own directory before importing ACE-Step.
-_HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path = [p for p in sys.path if os.path.abspath(p or ".") != _HERE]
-
 
 def _patch_torchaudio_io() -> None:
     """Route torchaudio.load/save through soundfile to avoid the torchcodec/FFmpeg backend.
 
     torchaudio 2.11 dispatches load/save to ``torchcodec``, which needs a matching FFmpeg shared
-    library that may be absent (the case on this host). soundfile (libsndfile) covers the wav I/O
-    ACE-Step needs, so swap the two functions for soundfile-backed equivalents.
+    library that may be absent. soundfile (libsndfile) covers the wav I/O ACE-Step needs, so swap
+    the two functions for soundfile-backed equivalents.
     """
     import soundfile as sf
     import torch
