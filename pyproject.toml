@@ -28,11 +28,13 @@ cpu = [
     # pyworld 0.3.5 imports the (deprecated) pkg_resources at module load.
     "setuptools<81",
 ]
-# GPU lanes (neural SVS, voice conversion). Imported lazily so the CPU baseline is unaffected.
+# GPU lanes (neural SVS, voice conversion) + neural vocoder. Imported lazily so the CPU baseline
+# is unaffected.
 gpu = [
     "torch>=2.12",
     "torchaudio",
     "torchcrepe>=0.0.24",
+    "vocos>=0.1",  # modern neural mel-vocoder for the deterministic lane's `vocoder: vocos` option
 ]
 dev = [
     "ruff>=0.15",

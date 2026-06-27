@@ -108,6 +108,22 @@ demo-seedvc: setup setup-seedvc-backend download-donors
     uv run voders run --config evals/fixtures/seedvc.yaml
     uv run voders eval --manifest out/seedvc/manifest.jsonl
 
+# EXPERIMENTAL: deterministic lane re-vocoded through Vocos (needs the gpu extra).
+# Note: mel Vocos is not f0-conditioned, so the alignment gate currently rejects its output —
+# see src/voders/render/vocos_enhance.py. Kept as a runnable experiment, not a default.
+demo-vocos: setup-gpu
+    uv run --extra cpu --extra gpu voders run --config evals/fixtures/vocos.yaml
+    uv run --extra cpu --extra gpu voders eval --manifest out/vocos/manifest.jsonl
+
+# Sync the consumer-side Basic Pitch eval backend (its own uv project, Python 3.11).
+setup-basicpitch-backend:
+    uv sync --project backends/basicpitch
+
+# Consumer-side eval: run Basic Pitch on a produced corpus, report note-F1 per source
+# (does the drift actually matter to the downstream transcriber?). Override: `just basic-pitch-eval manifest=out/<run>/manifest.jsonl`.
+basic-pitch-eval manifest=manifest: setup-basicpitch-backend
+    uv run --project backends/basicpitch python -m voders_basicpitch_backend.worker {{manifest}}
+
 # Render + validate with the CREPE neural f0 estimator on the GPU (needs the `gpu` extra).
 smoke-gpu: setup-gpu
     uv run --extra cpu --extra gpu python evals/make_fixtures.py

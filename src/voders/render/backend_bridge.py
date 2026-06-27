@@ -117,29 +117,28 @@ def convert_via_backend(
     device: str = "auto",
     sr: int = SAMPLE_RATE,
     timeout_s: float = 600.0,
+    params: dict | None = None,
 ) -> np.ndarray:
     """Send already-rendered audio to a conversion backend and return the converted audio.
 
-    Used by the voice-conversion lane's neural backends (e.g. RVC): the core renders score-aligned
-    audio in-process, the backend changes only the timbre, and the score f0 (labels) is preserved.
+    Used by the voice-conversion lane's neural backends (e.g. RVC, Seed-VC): the core renders
+    score-aligned audio in-process, the backend changes only the timbre, and the score f0 (labels)
+    is preserved. ``params`` carries backend-specific options (e.g. ``diffusion_steps``).
     """
     with tempfile.TemporaryDirectory() as tmp:
         in_wav = Path(tmp) / "in.wav"
         out_wav = Path(tmp) / "out.wav"
         req_path = Path(tmp) / "request.json"
         write_wav(in_wav, audio, sr)
-        req_path.write_text(
-            json.dumps(
-                {
-                    "in_wav": str(in_wav),
-                    "out_wav": str(out_wav),
-                    "model_ref": model_ref,
-                    "device": device,
-                    "f0up_key": 0,
-                }
-            ),
-            encoding="utf-8",
-        )
+        request = {
+            "in_wav": str(in_wav),
+            "out_wav": str(out_wav),
+            "model_ref": model_ref,
+            "device": device,
+            "f0up_key": 0,
+        }
+        request.update(params or {})
+        req_path.write_text(json.dumps(request), encoding="utf-8")
         result = _run_worker(name, module, {}, [req_path], timeout_s)
         if not result.get("ok"):
             raise RuntimeError(f"backend {name!r}: {result.get('error', 'conversion failed')}")

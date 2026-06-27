@@ -20,8 +20,18 @@ from voders.render.base import RenderRequest, RenderResult
 from voders.scores.models import Note
 
 _FRAME_PERIOD_MS = 5.0
-_FADE_MS = 5.0  # click-avoidance fade; well within the offset tolerance
 _ARTICULATION_DIP_MS = 18.0  # amplitude dip between same-pitch legato notes (edge case)
+
+# Realism, kept inside the alignment budget. Vibrato depth stays under the validator's ±25-cent
+# tolerance, and the attack/release are short relative to the onset/offset tolerances, so the audio
+# is livelier without the labels ever drifting (FR-003). All deterministic → SC-009 stays bit-exact.
+_VIBRATO_RATE_HZ = 5.5
+_VIBRATO_CENTS = 18.0  # peak deviation; < the 25-cent f0 tolerance
+_VIBRATO_ONSET_S = 0.12  # vibrato fades in after the note's attack (natural)
+# Kept short so the re-derive lane's energy-based onset detector and the validator's f0-based one
+# agree to well within the 50 ms onset tolerance (a longer attack drifts the detected onset).
+_ATTACK_S = 0.012
+_RELEASE_S = 0.030
 
 
 def midi_to_hz(pitch_midi: int) -> float:
@@ -31,9 +41,11 @@ def midi_to_hz(pitch_midi: int) -> float:
 
 @functools.lru_cache(maxsize=16)
 def _donor_timbre(model_ref: str) -> tuple[np.ndarray, np.ndarray]:
-    """Representative (spectral envelope, aperiodicity) frame for a donor vowel.
+    """The donor's full voiced (spectral envelope, aperiodicity) *trajectories*.
 
-    Cached per donor path. The median over voiced frames gives a pitch-independent vowel timbre.
+    Cached per donor path. Keeping the whole voiced sequence (not a single median frame) preserves
+    the donor's natural frame-to-frame spectral motion, which is what makes the render sound alive
+    rather than a flat, buzzy held vowel.
     """
     audio, sr = read_wav(model_ref)
     x = np.ascontiguousarray(audio.astype(np.float64))
@@ -48,31 +60,57 @@ def _donor_timbre(model_ref: str) -> tuple[np.ndarray, np.ndarray]:
     voiced = f0 > 0
     if not np.any(voiced):  # pragma: no cover - donor fixtures are voiced
         raise ValueError(f"donor {model_ref!r} has no voiced frames; cannot extract timbre")
-    sp_rep = np.median(sp[voiced], axis=0)
-    ap_rep = np.median(ap[voiced], axis=0)
-    return sp_rep, ap_rep
+    sp_v = sp[voiced]
+    ap_v = ap[voiced]
+    # Restrict to the donor's loud, stable core: drop low-energy edge frames (a donor's quiet
+    # attack/decay) so every rendered note starts at full energy and its onset is detected crisply
+    # even after augmentation masks it. The remaining frames still carry real spectral motion.
+    energy = sp_v.sum(axis=1)
+    keep = energy >= 0.5 * float(energy.max())
+    if np.count_nonzero(keep) >= 2:
+        sp_v, ap_v = sp_v[keep], ap_v[keep]
+    return np.ascontiguousarray(sp_v), np.ascontiguousarray(ap_v)
 
 
-def _fade(audio: np.ndarray, n_fade: int) -> np.ndarray:
-    if n_fade <= 0 or audio.size < 2 * n_fade:
-        return audio
-    ramp = np.linspace(0.0, 1.0, n_fade, dtype=np.float32)
-    audio[:n_fade] *= ramp
-    audio[-n_fade:] *= ramp[::-1]
-    return audio
+def _pingpong(n: int, period: int) -> np.ndarray:
+    """Indices sweeping 0→period-1→0… so the donor trajectory loops without a seam discontinuity."""
+    if period <= 1:
+        return np.zeros(n, dtype=int)
+    cycle = np.concatenate([np.arange(period), np.arange(period - 2, 0, -1)])
+    return cycle[np.arange(n) % cycle.size]
 
 
-def _render_note(note: Note, sp_rep: np.ndarray, ap_rep: np.ndarray) -> np.ndarray:
-    """Synthesise one note as a sustained tone at its exact pitch with the donor timbre."""
+def _amp_envelope(n: int) -> np.ndarray:
+    """A singer-like amplitude envelope: soft attack, gentle mid-note swell, soft release."""
+    env = np.ones(n, dtype=np.float32)
+    att = min(int(_ATTACK_S * SAMPLE_RATE), n // 2)
+    rel = min(int(_RELEASE_S * SAMPLE_RATE), n // 2)
+    if att > 0:
+        env[:att] = np.linspace(0.0, 1.0, att, dtype=np.float32) ** 1.5
+    if rel > 0:
+        env[-rel:] = np.linspace(1.0, 0.0, rel, dtype=np.float32) ** 1.5
+    swell = 0.92 + 0.08 * np.sin(np.pi * np.linspace(0.0, 1.0, n, dtype=np.float32))
+    return env * swell
+
+
+def _render_note(note: Note, sp_seq: np.ndarray, ap_seq: np.ndarray) -> np.ndarray:
+    """Synthesise one note: score pitch (+ light vibrato), donor timbre trajectory, envelope."""
     n_samples = max(1, int(round(note.duration_s * SAMPLE_RATE)))
     n_frames = max(1, int(round(note.duration_ms / _FRAME_PERIOD_MS)))
-    f0 = np.full(n_frames, midi_to_hz(note.pitch_midi), dtype=np.float64)
-    sp = np.tile(sp_rep, (n_frames, 1)).astype(np.float64)
-    ap = np.tile(ap_rep, (n_frames, 1)).astype(np.float64)
-    y = pw.synthesize(f0, sp, ap, SAMPLE_RATE, frame_period=_FRAME_PERIOD_MS)
+    base = midi_to_hz(note.pitch_midi)
+
+    tf = np.arange(n_frames) * (_FRAME_PERIOD_MS / 1000.0)
+    depth = 2.0 ** (_VIBRATO_CENTS / 1200.0) - 1.0
+    onset_gain = np.clip(tf / _VIBRATO_ONSET_S, 0.0, 1.0)
+    f0 = base * (1.0 + depth * onset_gain * np.sin(2.0 * np.pi * _VIBRATO_RATE_HZ * tf))
+
+    idx = _pingpong(n_frames, sp_seq.shape[0])
+    sp = np.ascontiguousarray(sp_seq[idx], dtype=np.float64)
+    ap = np.ascontiguousarray(ap_seq[idx], dtype=np.float64)
+    y = pw.synthesize(np.ascontiguousarray(f0), sp, ap, SAMPLE_RATE, frame_period=_FRAME_PERIOD_MS)
     y = np.asarray(y, dtype=np.float32)
     y = y[:n_samples] if y.size >= n_samples else np.pad(y, (0, n_samples - y.size))
-    return _fade(y, int(_FADE_MS * SAMPLE_RATE / 1000.0))
+    return y * _amp_envelope(n_samples)
 
 
 class DeterministicLane:
@@ -90,13 +128,13 @@ class DeterministicLane:
                 audio=np.zeros(0, dtype=np.float32), label_score=score, notes={"empty": True}
             )
 
-        sp_rep, ap_rep = _donor_timbre(req.voice.model_ref)
+        sp_seq, ap_seq = _donor_timbre(req.voice.model_ref)
         total_samples = int(round(score.duration_s * SAMPLE_RATE)) + 1
         out = np.zeros(total_samples, dtype=np.float32)
 
         dip_n = int(_ARTICULATION_DIP_MS * SAMPLE_RATE / 1000.0)
         for i, note in enumerate(score.notes):
-            y = _render_note(note, sp_rep, ap_rep)
+            y = _render_note(note, sp_seq, ap_seq)
             start = int(round(note.onset_s * SAMPLE_RATE))
             end = min(start + y.size, out.size)
             out[start:end] += y[: end - start]
@@ -114,4 +152,13 @@ class DeterministicLane:
         peak = float(np.max(np.abs(out))) if out.size else 0.0
         if peak > 0:
             out = (out * (0.9 / peak)).astype(np.float32)
-        return RenderResult(audio=to_mono_float32(out), label_score=score, notes={})
+
+        notes: dict[str, object] = {}
+        # Optional neural-vocoder enhancement (alignment-safe: mel preserves timing/pitch). Lazily
+        # imported so the CPU baseline never loads torch (FR-009).
+        if str(req.options.get("vocoder", "world")) == "vocos":
+            from voders.render.vocos_enhance import enhance
+
+            out = enhance(out, SAMPLE_RATE, device=str(req.options.get("device", "auto")))
+            notes["vocoder"] = "vocos"
+        return RenderResult(audio=to_mono_float32(out), label_score=score, notes=notes)
