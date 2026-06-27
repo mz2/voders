@@ -22,25 +22,34 @@ so any one sample is reproducible in isolation. Runs stream and checkpoint to ha
 
 ## Technical Context
 
-**Language/Version**: Python 3.11
-**Primary Dependencies**:
-- Core (CPU): `numpy`, `scipy`, `soundfile`, `librosa`, `pyworld` (WORLD vocoder — a
-  classic analysis/resynthesis vocoder that lets us replace a voice's pitch with a score-derived
-  contour), `pretty_midi` / `music21` (convert `.tsv` scores to MIDI/MusicXML), `pyyaml`,
-  `pydantic` (config + manifest schema validation).
-- Validator: `torchcrepe` (CREPE — a neural fundamental-frequency / "f0" estimator) with a
+**Language/Version**: Python 3.14 (current stable as of June 2026)
+**Primary Dependencies** (current major versions verified against PyPI, June 2026; pinned as
+lower bounds):
+- Core (CPU): `numpy>=2.5`, `scipy>=1.18`, `soundfile>=0.14`, `librosa>=0.11`, `pyworld>=0.3.5`
+  (WORLD vocoder — a classic analysis/resynthesis vocoder that lets us replace a voice's pitch with
+  a score-derived contour), `pretty_midi>=0.2.11` / `music21>=10.5` (convert `.tsv` scores to
+  MIDI/MusicXML), `pyyaml>=6.0.3`, `pydantic>=2.13` (config + manifest schema validation; Pydantic v2
+  is the current line, no v3 released).
+- Validator: `torchcrepe>=0.0.24` (CREPE — a neural fundamental-frequency / "f0" estimator) with a
   `pyin` (`librosa`) CPU fallback.
-- Augmentation: `pedalboard` (Spotify's DSP plugin host — convenient since the downstream judge is
-  Spotify's model), `audiomentations`, `torchaudio` (codec round-trips).
-- Optional GPU lanes (PyTorch): DiffSinger via OpenUTAU, NNSVS (neural singing-voice synthesis);
-  RVC and so-vits-svc (voice conversion); Montreal Forced Aligner / "MFA" (forced alignment — lines
-  text/phonemes up against audio to re-derive note boundaries).
+- Augmentation: `pedalboard>=0.9.23` (Spotify's DSP plugin host — convenient since the downstream
+  judge is Spotify's model), `audiomentations>=0.43`, `torchaudio` (matching the installed `torch`;
+  codec round-trips).
+- Optional GPU lanes (`torch>=2.12`, which adds Python 3.14 wheels): DiffSinger via OpenUTAU, NNSVS
+  (neural singing-voice synthesis); RVC and so-vits-svc (voice conversion); Montreal Forced Aligner /
+  "MFA" (forced alignment — lines text/phonemes up against audio to re-derive note boundaries).
+
+> Compatibility note: the niche audio deps (`pyworld`, `torchcrepe`) release infrequently
+> (`pyworld` 0.3.5 / Jan 2025, `torchcrepe` 0.0.24); confirm their Python 3.14 wheels at setup and
+> build from source if a wheel is missing. The neural GPU lanes pin their own upstream toolkits and
+> are optional extras, so the CPU baseline is unaffected if a GPU toolkit lags 3.14.
 
 **Storage**: Local disk. Accepted corpus written to a sharded directory tree; provenance to a JSON
 Lines manifest (one record per line, append-only). Non-accepted samples (provenance + audio)
 retained in a separate `rejected/` tree. The rendered corpus audio is never committed to Git; the
 run's end-result record (final manifest + resolved config + stats report) is text and is committable.
-**Testing**: `pytest`. Lint/format: `ruff` (lint) + `ruff format`. Type-check: `mypy` (advisory).
+**Testing**: `pytest>=9.1`. Lint/format: `ruff>=0.15` (lint) + `ruff format`. Type-check:
+`mypy>=2.1` (advisory).
 **Target Platform**: Linux. Deterministic lane + validator run on commodity 4-core CPU, no GPU;
 the neural-SVS and voice-conversion lanes run on GPU (two DGX Spark machines available).
 **Project Type**: Single Python project — a CLI-driven data pipeline (library + thin CLI).
