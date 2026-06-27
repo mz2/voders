@@ -119,7 +119,7 @@ Added to the existing `RunConfig` (`src/voders/config/models.py`). Default keeps
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | `source` | LyricSource | `vowel` | per-run lyric source selector (FR-013) |
-| `inventory` | str | `"en_cv"` | name of the checked-in syllable/phoneme inventory for `automatic` |
+| `inventory` | str | `"en_cv"` | checked-in syllable inventory / **style** for `automatic`: `en_cv` (neutral CV) or `scat` (jazz scat-singing, Scatman-style) |
 | `g2p_backend` | str | `"espeak"` | G2P backend for articulation |
 | `syllabifier` | str | `"en_rule"` | segmenter used by `generated` (split words→syllables) and to flag `supplied` multi-syllable cells (FR-019); deterministic, CPU |
 | `melisma` | str | `"per_note"` | v1 accepts only `per_note` (one syllable/note); `sustain_ties` (hold across tied notes) is **reserved** and raises a "not yet supported" validation error until implemented |

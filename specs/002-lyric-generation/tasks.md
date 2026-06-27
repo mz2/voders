@@ -14,6 +14,33 @@ implementation.
 
 **Organization**: Tasks grouped by user story (US1=P1 … US4=P4). MVP = Phase 1 + 2 + US1.
 
+## Implementation status (2026-06-27)
+
+Implemented on the `002-lyric-generation` branch (full pytest suite + ruff green):
+
+- **Foundational**: `lyrics` extra (phonemizer) added; `voders.lyrics` package (models, sources,
+  sampler, coverage, **syllabify**, **g2p**, **cache**); `Note.lyric` + 4th-column parse/serialize;
+  `LyricsConfig` (incl. `syllabifier`) + `ProvenanceRecord` lyric axis (incl.
+  `lyric_multisyllable_supplied`); FR-005 import-isolation tests.
+- **US1**: lyric layer wired through the orchestrator (per-(score,voice) plan → render request +
+  provenance); `SuppliedSource` (cells as authored, multi-syllable flagged); SVS lane
+  `lyric_articulated` for articulating backends; G2P vowel-on-the-beat mapping; differential
+  no-shift (label-level) test (SC-008/009). Real neural articulation rides the out-of-process SVS
+  backend (not run on CPU here).
+- **FR-019/SC-010**: deterministic `syllabify` (segment + syllable_count); one-syllable-per-note
+  structural guarantee for automatic/generated; supplied multi-syllable flagging.
+- **US3**: provenance population + stats lyric axis (by_source, multisyllable total, phonetic
+  coverage). License gate folded into US4 (runtime, manifest-surfaced).
+- **US4**: `GeneratedSource` + cache-as-artifact (replay with zero model re-invocation) + license
+  refusal; lyrics backend bridge + deterministic placeholder worker.
+- **Styles**: automatic source `inventory` selects the style — `en_cv` (neutral CV) and **`scat`**
+  (jazz scat-singing, Scatman "ski-ba-bop-ba-dop-bop"). Fixtures `lyrics-smoke.yaml` /
+  `lyrics-scat.yaml` run end-to-end on CPU.
+
+Remaining (environment-bound / optional): a dedicated `voders eval --suite lyrics` CLI (SC gates are
+currently covered by the pytest suite); real neural SVS phoneme articulation + real espeak G2P +
+real LLM generation (the out-of-process/GPU backends, plumbed with placeholders).
+
 **Amended 2026-06-27** (post-`/speckit-clarify`, FR-019 + SC-010): added the deterministic `syllabify`
 module (T011a/T011b) and the one-syllable-per-note work — `supplied` multi-syllable flagging (T017,
 provenance `lyric_multisyllable_supplied` in T010/T011, stats in T034), structural SC-010 assertions

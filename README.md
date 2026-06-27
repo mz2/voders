@@ -60,6 +60,40 @@ Each lane is enabled or disabled independently in the run config:
 The deterministic lane and validator run on a laptop CPU with no GPU. The neural lanes
 (`svs`, `voice_conversion`) use the `gpu` extra.
 
+## Optional lyrics (phonetic diversity)
+
+Lyrics are **opt-in** and exist only to add phonetic variety (consonants, vowel transitions) the
+single open vowel "ah" lacks — they are never a corpus label. With no `lyrics` block a run is
+byte-identical to the lyric-free pipeline. Add a `lyrics` block to a run config to pick a source:
+
+```yaml
+lyrics:
+  source: automatic     # vowel (default) | supplied | automatic | generated
+  inventory: en_cv      # automatic-source style: en_cv | scat
+```
+
+- **vowel** — default, lyric-free (open vowel).
+- **supplied** — per-note syllables carried in an optional 4th `.tsv` column (taken as authored).
+- **automatic** — a seeded, CPU, dependency-free syllable sampler. `inventory: en_cv` for neutral
+  consonant–vowel syllables, or **`inventory: scat`** for jazz **scat-singing** syllables
+  (Scatman-style "ski-ba-bop-ba-dop-bop"). Deterministic from the master seed, reproducible.
+- **generated** — optional, opt-in themed lyrics from an out-of-process model, pinned as a cached
+  artifact so replays never re-invoke the model; an unverified model license is refused.
+
+Every source assigns **one syllable per note**. Only the **svs** lane articulates the syllables as
+phonemes; the deterministic and voice-conversion lanes are unchanged. Articulation uses
+grapheme-to-phoneme (G2P) via the optional `lyrics` extra and the espeak-ng system library:
+
+```bash
+sudo apt install espeak-ng
+uv sync --extra lyrics       # adds phonemizer (imported lazily; CPU baseline unaffected)
+```
+
+```bash
+just run config=evals/fixtures/lyrics-smoke.yaml   # automatic en_cv syllables (CPU)
+just run config=evals/fixtures/lyrics-scat.yaml    # scat-singing style
+```
+
 ## Quickstart
 
 Everything is driven by a [`just`](https://github.com/casey/just) task runner; each action goes

@@ -96,9 +96,7 @@ class SuppliedSource:
 
     def resolve(self, score: Score, *, master_seed: int, voice_id: str) -> LyricPlan:
         syllables: list[str | None] = [n.lyric for n in score.notes]
-        multisyllable = [
-            i for i, s in enumerate(syllables) if s and syllable_count(s) != 1
-        ]
+        multisyllable = [i for i, s in enumerate(syllables) if s and syllable_count(s) != 1]
         return LyricPlan.build(
             score.score_id,
             LyricSource.SUPPLIED,

@@ -22,9 +22,7 @@ def _supplied_corpus(tmp_path: Path, donor_ah) -> RunConfig:
     scores_dir.mkdir(parents=True, exist_ok=True)
     # Two single-syllable cells + one multi-syllable cell ("winter") taken as authored.
     (scores_dir / "sup.tsv").write_text(
-        "0.000000\t0.500000\t60\tla\n"
-        "0.500000\t1.000000\t62\tdee\n"
-        "1.000000\t1.500000\t64\twinter\n",
+        "0.000000\t0.500000\t60\tla\n0.500000\t1.000000\t62\tdee\n1.000000\t1.500000\t64\twinter\n",
         encoding="utf-8",
     )
     return RunConfig(

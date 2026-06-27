@@ -375,7 +375,9 @@ pinned text (identical lyrics) without invoking the model again.
 - The supplied score annotations contain no lyrics or themes; the automatic source needs no input
   data, and any theming is an operator-supplied string consumed only by the optional generated source.
 - The automatic source aims for phonetic *coverage*, not lyrical meaning; syllables need only be
-  singable and pronounceable, not coherent words.
+  singable and pronounceable, not coherent words. It offers selectable **styles** via its inventory:
+  `en_cv` (neutral consonant–vowel syllables) and `scat` (jazz scat-singing syllables, Scatman-style
+  "ski-ba-bop-ba-dop-bop"); both are seed-deterministic and one-syllable-per-note.
 - The melisma policy in v1 assigns one syllable per note (`per_note`); sustaining a single syllable
   across tied/legato notes (`sustain_ties`) is a reserved option that v1 rejects with a "not yet
   supported" validation error rather than silently accepting an unimplemented mode.

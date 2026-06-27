@@ -321,9 +321,7 @@ class Orchestrator:
                 voice_license=voice.license,
                 consent_verified=voice.consent_verified,
                 config_hash=self.config_hash,
-                verdict=ValidationVerdict(
-                    status=VerdictStatus.LICENSE_REFUSED, reason=str(exc)
-                ),
+                verdict=ValidationVerdict(status=VerdictStatus.LICENSE_REFUSED, reason=str(exc)),
                 lyric_source=LyricSource.GENERATED.value,
                 lyric_model=model.model_id if model else None,
                 lyric_model_license=model.license if model else None,
@@ -332,9 +330,7 @@ class Orchestrator:
             return record, None
         lyrics = plan.syllables if plan is not None else None
         result = lane.render(
-            RenderRequest(
-                score=ps.score, voice=voice, seed=seed, options=options, lyrics=lyrics
-            )
+            RenderRequest(score=ps.score, voice=voice, seed=seed, options=options, lyrics=lyrics)
         )
         verdict = validator.validate(result.audio, result.label_score)
         lane_dev = result.notes.get("max_onset_dev_ms", 0.0)
