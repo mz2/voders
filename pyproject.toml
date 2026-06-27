@@ -46,6 +46,10 @@ donors = [
     "datasets>=2.19",
     "librosa>=0.11",
 ]
+# Microphone capture for `evals/record_donor.py --record`. Importing a WAV needs only the cpu extra.
+record = [
+    "sounddevice>=0.5",
+]
 
 [project.scripts]
 voders = "voders.cli.__main__:main"
