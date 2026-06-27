@@ -29,6 +29,14 @@ def _load(model_ref: str):
     return tokenizer, model, device
 
 
+# espeak language code -> human name for the generation prompt (native script for CJK).
+_LANG_NAMES = {
+    "en-us": "English", "en": "English", "de": "German", "fr-fr": "French", "fr": "French",
+    "es": "Spanish", "it": "Italian", "pt": "Portuguese", "ru": "Russian", "nl": "Dutch",
+    "pl": "Polish", "ja": "Japanese", "cmn": "Chinese", "zh": "Chinese", "ko": "Korean",
+}
+
+
 def generate_lyrics(
     theme: str,
     n_syllables: int,
@@ -36,10 +44,12 @@ def generate_lyrics(
     *,
     model_ref: str = "",
     max_new_tokens: int = 160,
+    language: str = "en-us",
 ) -> str:
-    """Generate themed lyric text aiming for about ``n_syllables`` singable syllables (FR-011).
+    """Generate themed lyric text in ``language`` aiming for ~``n_syllables`` syllables (FR-011).
 
-    Returns raw text; the caller segments it into one-syllable-per-note and pins it (FR-012/FR-019).
+    Returns raw text (native script for CJK); the caller segments it one-syllable-per-note and pins
+    it (FR-012/FR-019).
     """
     import torch
 
@@ -49,11 +59,12 @@ def generate_lyrics(
 
     target = max(1, n_syllables)
     theme_text = theme.strip() or "a wordless melody"
+    lang_name = _LANG_NAMES.get(language, "English")
     prompt = (
-        f"Write simple, singable English lyrics about {theme_text}. "
-        f"Use about {target} short one- or two-syllable words. "
-        "Reply with only the words on one line, separated by spaces, with no punctuation, "
-        "no title, and no explanation."
+        f"Write simple, singable {lang_name} lyrics about {theme_text}. "
+        f"Use about {target} short one- or two-syllable words, written in {lang_name}. "
+        f"Reply with only the {lang_name} words on one line, separated by spaces, with no "
+        "punctuation, no title, no translation, and no explanation."
     )
     messages = [{"role": "user", "content": prompt}]
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)

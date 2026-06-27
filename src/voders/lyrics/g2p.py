@@ -67,19 +67,27 @@ DEFAULT_NEURAL_G2P_MODEL = "charsiu/g2p_multilingual_byT5_tiny_16_layers_100"
 _IPA_DIACRITICS = set("ˈˌːˑ̃ʰʷ̩̯̪̥")
 
 
-def text_to_phonemes(text: str, *, backend: str = "espeak") -> list[str]:
-    """Convert a syllable/word to a list of phonemes (one token each).
+# espeak language code -> Charsiu byT5 language prefix, for the neural backend.
+_CHARSIU_LANG = {
+    "en-us": "eng-us", "en": "eng-us", "de": "deu", "fr-fr": "fra", "fr": "fra", "es": "spa",
+    "it": "ita", "pt": "por", "ru": "rus", "nl": "nld", "pl": "pol", "ja": "jpn", "cmn": "cmn",
+    "ko": "kor",
+}
 
-    ``backend='espeak'`` (default) uses ``phonemizer``/espeak-ng (rule-based, CPU). ``backend=
-    'neural'`` uses a byte-level T5 G2P model on GPU (higher quality). Heavy deps are imported
-    lazily, so the CPU baseline loads neither (FR-005).
+
+def text_to_phonemes(text: str, *, backend: str = "espeak", language: str = "en-us") -> list[str]:
+    """Convert a syllable/word to a list of phonemes (one token each) in ``language``.
+
+    ``backend='espeak'`` (default) uses ``phonemizer``/espeak-ng (rule-based, CPU, ~100 languages).
+    ``backend='neural'`` uses a byte-level T5 G2P model on GPU. Heavy deps are imported lazily, so
+    the CPU baseline loads neither (FR-005). ``language`` is an espeak code (en-us|de|fr-fr|ja|...).
     """
     if backend == "neural":
-        return _neural_phonemes(text)
-    return _espeak_phonemes(text)
+        return _neural_phonemes(text, language=language)
+    return _espeak_phonemes(text, language=language)
 
 
-def _espeak_phonemes(text: str) -> list[str]:
+def _espeak_phonemes(text: str, language: str = "en-us") -> list[str]:
     try:
         from phonemizer import phonemize  # lazy: not imported on the CPU baseline (FR-005)
         from phonemizer.separator import Separator
@@ -92,21 +100,26 @@ def _espeak_phonemes(text: str) -> list[str]:
     # split in :func:`map_syllable` sees individual phonemes rather than a single fused string.
     out = phonemize(
         [text],
-        language="en-us",
+        language=language,
         backend="espeak",
         separator=Separator(phone="|", word=" "),
         strip=True,
     )
     if not out:
         return []
-    return [p for p in str(out[0]).replace(" ", "|").split("|") if p]
+    # espeak marks unknown spans like "(en)...(ru)"; drop those language tags.
+    toks = str(out[0]).replace(" ", "|").split("|")
+    return [p for p in toks if p and not (p.startswith("(") and p.endswith(")"))]
 
 
-def _neural_phonemes(text: str, model_ref: str = DEFAULT_NEURAL_G2P_MODEL) -> list[str]:
+def _neural_phonemes(
+    text: str, model_ref: str = DEFAULT_NEURAL_G2P_MODEL, language: str = "en-us"
+) -> list[str]:
     import torch
 
     tokenizer, model, device = _load_neural_g2p_cached(model_ref)
-    ids = tokenizer([f"<eng-us>: {text}"], return_tensors="pt").to(device)
+    prefix = _CHARSIU_LANG.get(language, "eng-us")
+    ids = tokenizer([f"<{prefix}>: {text}"], return_tensors="pt").to(device)
     with torch.no_grad():
         out = model.generate(**ids, max_length=48, num_beams=1)  # greedy => deterministic
     ipa = tokenizer.batch_decode(out, skip_special_tokens=True)[0]
@@ -127,16 +140,21 @@ def _load_neural_g2p_cached(model_ref: str):
 
 
 def phoneme_runs(
-    plan_syllables: list[str | None], score: Score, *, backend: str = "espeak"
+    plan_syllables: list[str | None],
+    score: Score,
+    *,
+    backend: str = "espeak",
+    language: str = "en-us",
 ) -> list[PhonemeRun]:
     """Map each note's syllable to a :class:`PhonemeRun` (skips ``None``/open-vowel notes).
 
-    Calls the G2P backend (lazy) per non-empty syllable, so it only runs when lyrics are present.
+    Calls the G2P backend (lazy) per non-empty syllable in ``language``, so it only runs when lyrics
+    are present.
     """
     runs: list[PhonemeRun] = []
     for i, (syllable, note) in enumerate(zip(plan_syllables, score.notes, strict=True)):
         if not syllable:
             continue
-        phonemes = text_to_phonemes(syllable, backend=backend)
+        phonemes = text_to_phonemes(syllable, backend=backend, language=language)
         runs.append(map_syllable(phonemes, note.onset_s, note.offset_s, i))
     return runs

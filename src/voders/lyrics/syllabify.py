@@ -90,3 +90,50 @@ def syllable_count(text: str) -> int:
     Used to flag a non-single-syllable ``supplied`` cell (count != 1) without altering it.
     """
     return len(segment(text))
+
+
+# Unicode vowels across the supported European languages (Latin + Cyrillic), for multilingual
+# segmentation; CJK is split per character (each kana/hanzi/hangul block is ~one syllable).
+_UNI_VOWELS = frozenset("aeiouy" "àáâãäåæ" "èéêë" "ìíîï" "òóôõöø" "ùúûü" "ýÿœ" "ąę" "аеёиоуыэюяі")
+_CJK = re.compile(r"[぀-ヿ㐀-鿿가-힯]")
+_UNI_WORD = re.compile(r"[^\W\d_]+", re.UNICODE)
+_CJK_LANGS = frozenset({"ja", "cmn", "zh", "ko"})
+
+
+def _split_word_unicode(word: str) -> list[str]:
+    """Vowel-group split for a lowercase Latin/Cyrillic word (accent-aware); no silent-e rules."""
+    groups: list[tuple[int, int]] = []
+    i, n = 0, len(word)
+    while i < n:
+        if word[i] in _UNI_VOWELS:
+            j = i
+            while j < n and word[j] in _UNI_VOWELS:
+                j += 1
+            groups.append((i, j))
+            i = j
+        else:
+            i += 1
+    if not groups:
+        return [word] if word else []
+    bounds = [0]
+    for (_, end), (nxt, _) in zip(groups, groups[1:], strict=False):
+        bounds.append(end + (nxt - end) // 2)
+    bounds.append(n)
+    return [word[a:b] for a, b in zip(bounds, bounds[1:], strict=False) if word[a:b]]
+
+
+def segment_multilingual(text: str, language: str = "en-us") -> list[str]:
+    """Segment generated lyric text into one-syllable units, language-aware (FR-019).
+
+    English uses the rule splitter; other Latin/Cyrillic languages use an accent-aware vowel-group
+    split; CJK languages split per character (kana/hanzi/hangul ≈ one mora/syllable).
+    """
+    base = language.split("-")[0].lower()
+    if base in _CJK_LANGS:
+        return [c for c in text if _CJK.match(c)]
+    if base in ("en", ""):
+        return segment(text)
+    out: list[str] = []
+    for m in _UNI_WORD.finditer(text):
+        out.extend(_split_word_unicode(m.group(0).lower()))
+    return out

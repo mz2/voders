@@ -58,6 +58,9 @@ class LyricPlan(BaseModel):
     # (one syllable per note by construction/segmentation, FR-019); for ``supplied`` it lists cells
     # taken as authored and flagged (never re-segmented or rejected).
     multisyllable_notes: list[int] = Field(default_factory=list)
+    # espeak/G2P language code for articulation (en-us|de|fr-fr|es|...|ja|cmn|ko) — multilingual
+    # phonetic coverage. Recorded in provenance so the corpus's language mix is auditable.
+    language: str = "en-us"
     model: LyricModel | None = None
 
     @staticmethod
@@ -80,6 +83,7 @@ class LyricPlan(BaseModel):
         model: LyricModel | None = None,
         mismatch: bool = False,
         multisyllable_notes: list[int] | None = None,
+        language: str = "en-us",
     ) -> LyricPlan:
         """Build a plan, computing the deterministic ``text_hash`` from ``syllables``."""
         return cls(
@@ -89,6 +93,7 @@ class LyricPlan(BaseModel):
             text_hash=cls.hash_syllables(syllables),
             mismatch=mismatch,
             multisyllable_notes=list(multisyllable_notes or []),
+            language=language,
             model=model,
         )
 

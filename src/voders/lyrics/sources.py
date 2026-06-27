@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from voders.lyrics.cache import LyricCache, request_key
 from voders.lyrics.models import LyricModel, LyricPlan, LyricSource
 from voders.lyrics.sampler import load_inventory, sample_syllables
-from voders.lyrics.syllabify import segment, syllable_count
+from voders.lyrics.syllabify import segment_multilingual, syllable_count
 from voders.seeds import sample_seed
 
 if TYPE_CHECKING:
@@ -23,6 +23,16 @@ if TYPE_CHECKING:
 # A generator turns (theme, score, seed) into raw lyric text; the source then segments it into
 # syllables (FR-019). Injectable so tests can avoid the out-of-process model backend.
 GeneratorFn = Callable[[str, "Score", int], str]
+
+
+def _pick_language(
+    languages: list[str] | tuple[str, ...], master_seed: int, score_id: str, voice_id: str
+) -> str:
+    """Deterministically choose one language for a sample from the configured set (seeded)."""
+    langs = list(languages) or ["en-us"]
+    if len(langs) == 1:
+        return langs[0]
+    return langs[sample_seed(master_seed, score_id, voice_id, "lyric_lang") % len(langs)]
 
 
 class LyricLicenseRefused(PermissionError):
@@ -88,8 +98,11 @@ class SuppliedSource:
 
     name = "supplied"
 
-    def __init__(self, syllabifier: str = "en_rule") -> None:
+    def __init__(
+        self, syllabifier: str = "en_rule", languages: tuple[str, ...] = ("en-us",)
+    ) -> None:
         self._syllabifier = syllabifier
+        self._languages = languages
 
     def requires_gpu(self) -> bool:
         return False
@@ -102,6 +115,7 @@ class SuppliedSource:
             LyricSource.SUPPLIED,
             syllables,
             multisyllable_notes=multisyllable,
+            language=_pick_language(self._languages, master_seed, score.score_id, voice_id),
         )
 
 
@@ -115,8 +129,9 @@ class AutomaticSource:
 
     name = "automatic"
 
-    def __init__(self, inventory: str = "en_cv") -> None:
+    def __init__(self, inventory: str = "en_cv", languages: tuple[str, ...] = ("en-us",)) -> None:
         self._inventory_name = inventory
+        self._languages = languages
 
     def requires_gpu(self) -> bool:
         return False
@@ -125,7 +140,12 @@ class AutomaticSource:
         seed = sample_seed(master_seed, score.score_id, voice_id, "lyrics")
         inventory = load_inventory(self._inventory_name)
         syllables = sample_syllables(len(score.notes), seed, inventory)
-        return LyricPlan.build(score.score_id, LyricSource.AUTOMATIC, list(syllables))
+        return LyricPlan.build(
+            score.score_id,
+            LyricSource.AUTOMATIC,
+            list(syllables),
+            language=_pick_language(self._languages, master_seed, score.score_id, voice_id),
+        )
 
 
 def _generate_via_backend(theme: str, score: Score, seed: int, model_ref: str) -> str:
@@ -158,6 +178,7 @@ class GeneratedSource:
         cache_dir: str = "lyrics",
         output_root: str | None = None,
         generator: GeneratorFn | None = None,
+        languages: tuple[str, ...] = ("en-us",),
     ) -> None:
         self._theme = theme or ""
         self._model = model
@@ -165,6 +186,7 @@ class GeneratedSource:
         self._cache_dir = cache_dir
         self._output_root = output_root
         self._generator = generator
+        self._languages = languages
 
     def requires_gpu(self) -> bool:
         # The model runs out-of-process (backends/lyrics); the core never imports it.
@@ -177,16 +199,19 @@ class GeneratedSource:
                 f"lyric model {model_id!r} license not verified; refused (FR-010)"
             )
         seed = sample_seed(master_seed, score.score_id, voice_id, "lyrics")
+        language = _pick_language(self._languages, master_seed, score.score_id, voice_id)
         n = len(score.notes)
-        key = request_key(self._theme, self._model.model_ref, score.score_id, seed, n)
+        key = request_key(
+            f"{self._theme}|{language}", self._model.model_ref, score.score_id, seed, n
+        )
         cache = LyricCache(self._output_root, self._cache_dir) if self._output_root else None
 
         cached = cache.load(key) if cache is not None else None
         if cached is not None:
             syllables, mismatch = reconcile(cached, n)
         else:
-            raw_text = self._generate(score, seed)
-            segmented: list[str | None] = list(segment(raw_text))
+            raw_text = self._generate(score, seed, language)
+            segmented: list[str | None] = list(segment_multilingual(raw_text, language))
             syllables, mismatch = reconcile(segmented, n)
             if cache is not None:
                 cache.store(
@@ -196,7 +221,7 @@ class GeneratedSource:
                     source="generated",
                     model_id=self._model.model_id,
                 )
-        # Each non-None entry is one syllable from ``segment`` by construction (FR-019/SC-010).
+        # Each non-None entry is one syllable from segmentation by construction (FR-019/SC-010).
         return LyricPlan.build(
             score.score_id,
             LyricSource.GENERATED,
@@ -204,9 +229,10 @@ class GeneratedSource:
             model=self._model,
             mismatch=mismatch,
             multisyllable_notes=[],
+            language=language,
         )
 
-    def _generate(self, score: Score, seed: int) -> str:
+    def _generate(self, score: Score, seed: int, language: str = "en-us") -> str:
         if self._generator is not None:
             return self._generator(self._theme, score, seed)
         assert self._model is not None
@@ -214,7 +240,13 @@ class GeneratedSource:
         # ``_generate_via_backend`` remains available for isolated/alternative model toolkits.
         from voders.lyrics.llm import generate_lyrics
 
-        return generate_lyrics(self._theme, len(score.notes), seed, model_ref=self._model.model_ref)
+        return generate_lyrics(
+            self._theme,
+            len(score.notes),
+            seed,
+            model_ref=self._model.model_ref,
+            language=language,
+        )
 
 
 def build_source(
@@ -226,18 +258,20 @@ def build_source(
     model: LyricModel | None = None,
     cache_dir: str = "lyrics",
     output_root: str | None = None,
+    languages: tuple[str, ...] = ("en-us",),
 ) -> LyricSourceProtocol:
     """Construct the source for a config selector, threading the relevant ``LyricsConfig`` params.
 
-    ``vowel``/``supplied``/``automatic`` are CPU; ``generated`` lands in US4 (raises until then).
+    ``languages`` spreads phonetic coverage across the given espeak codes (multilingual eval match).
     """
     source = LyricSource(config_source)
+    langs = tuple(languages) or ("en-us",)
     if source is LyricSource.VOWEL:
         return VowelSource()
     if source is LyricSource.SUPPLIED:
-        return SuppliedSource(syllabifier=syllabifier)
+        return SuppliedSource(syllabifier=syllabifier, languages=langs)
     if source is LyricSource.AUTOMATIC:
-        return AutomaticSource(inventory=inventory)
+        return AutomaticSource(inventory=inventory, languages=langs)
     if source is LyricSource.GENERATED:
         return GeneratedSource(
             theme=theme,
@@ -245,6 +279,7 @@ def build_source(
             syllabifier=syllabifier,
             cache_dir=cache_dir,
             output_root=output_root,
+            languages=langs,
         )
     raise NotImplementedError(f"lyric source {source.value} not implemented yet")
 

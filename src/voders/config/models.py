@@ -70,6 +70,9 @@ class LyricsConfig(BaseModel):
     inventory: str = "en_cv"
     g2p_backend: str = "espeak"
     syllabifier: str = "en_rule"
+    # espeak language codes to spread phonetic coverage across (multilingual eval match). One
+    # language is chosen per sample, seeded. Default keeps runs English/single-language.
+    languages: list[str] = Field(default_factory=lambda: ["en-us"])
     melisma: str = "per_note"
     theme: str | None = None
     model: LyricModel | None = None

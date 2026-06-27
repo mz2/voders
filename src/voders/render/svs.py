@@ -103,7 +103,7 @@ class SvsLane:
             return None
         from voders.lyrics.g2p import phoneme_runs
 
-        runs = phoneme_runs(req.lyrics, score, backend=req.g2p_backend)
+        runs = phoneme_runs(req.lyrics, score, backend=req.g2p_backend, language=req.language)
         return [
             {
                 "note_index": r.note_index,

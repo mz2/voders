@@ -7,8 +7,6 @@ pure, deterministic CPU functions with no heavy imports (FR-005).
 
 from __future__ import annotations
 
-import sys
-
 from voders.lyrics.syllabify import segment, syllable_count
 
 
@@ -73,7 +71,5 @@ def test_syllable_count_non_alpha_is_zero():
     assert syllable_count("   ") == 0
 
 
-def test_syllabify_is_cpu_safe():
-    # FR-005: no heavy deps pulled in by importing the segmenter.
-    assert "torch" not in sys.modules
-    assert "phonemizer" not in sys.modules
+# FR-005 import-safety for syllabify is covered robustly (subprocess-style pop) in
+# tests/unit/test_lyrics_imports.py; not duplicated here to avoid cross-test sys.modules pollution.

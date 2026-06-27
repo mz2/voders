@@ -94,10 +94,13 @@ def _lyric_stats(records: list[ProvenanceRecord], syllables: list[str | None]) -
     from voders.lyrics.coverage import phonetic_coverage
 
     by_source: dict[str, int] = {}
+    by_language: dict[str, int] = {}
     for r in records:
         by_source[r.lyric_source] = by_source.get(r.lyric_source, 0) + 1
+        by_language[r.lyric_language] = by_language.get(r.lyric_language, 0) + 1
     return {
         "by_source": by_source,
+        "by_language": by_language,
         "multisyllable_supplied_total": sum(r.lyric_multisyllable_supplied for r in records),
         "coverage": phonetic_coverage(syllables),
     }

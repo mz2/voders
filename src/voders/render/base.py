@@ -28,6 +28,8 @@ class RenderRequest:
     lyrics: list[str | None] | None = None
     # G2P backend the SVS lane uses to phonemize syllables: "espeak" (CPU rules) | "neural" (GPU).
     g2p_backend: str = "espeak"
+    # espeak language code for G2P/articulation (multilingual phonetic coverage).
+    language: str = "en-us"
 
 
 @dataclass

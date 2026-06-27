@@ -71,7 +71,15 @@ lyrics:
   source: automatic     # vowel (default) | supplied | automatic | generated
   inventory: en_cv      # automatic-source style: en_cv | scat
   g2p_backend: espeak   # espeak (CPU rules, default) | neural (byte-level T5 on GPU)
+  languages: [en-us]    # spread phonetic coverage across these (e.g. de, fr-fr, es, ja, cmn, ko)
 ```
+
+**Multilingual coverage:** set `languages:` to span the languages your evaluation set covers — one is
+chosen per sample (seeded) and recorded as `lyric_language` in the manifest/stats. Per-language G2P
+(espeak, ~100 languages; or the neural byT5) gives authentic per-language phonemes; on the same
+inventory, the 12-language EU+CJK set yields ~2.7× the distinct phonemes of English alone. The
+`generated` LLM source writes real words *in each language* (native script for CJK), and the nnsvs
+`yoko` voicebank covers Japanese natively. Example: `evals/fixtures/lyrics-multilingual.yaml`.
 
 - **vowel** — default, lyric-free (open vowel).
 - **supplied** — per-note syllables carried in an optional 4th `.tsv` column (taken as authored).

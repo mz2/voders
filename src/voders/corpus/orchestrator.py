@@ -82,6 +82,7 @@ class Orchestrator:
             model=config.lyrics.model,
             cache_dir=config.lyrics.cache_dir,
             output_root=config.output_root,
+            languages=tuple(config.lyrics.languages),
         )
 
     def _lyric_plan(self, score: ParsedScore | None, voice: Voice) -> LyricPlan | None:
@@ -103,6 +104,7 @@ class Orchestrator:
             "lyric_hash": plan.text_hash,
             "lyric_articulated": articulated,
             "lyric_multisyllable_supplied": len(plan.multisyllable_notes),
+            "lyric_language": plan.language,
         }
         if plan.model is not None:
             fields["lyric_model"] = plan.model.model_id
@@ -405,6 +407,7 @@ class Orchestrator:
                 options=options,
                 lyrics=lyrics,
                 g2p_backend=self.config.lyrics.g2p_backend,
+                language=plan.language if plan is not None else "en-us",
             )
         )
         verdict = validator.validate(result.audio, result.label_score)
