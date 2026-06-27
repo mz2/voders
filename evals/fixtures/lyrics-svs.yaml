@@ -12,7 +12,7 @@ voices:
     kind: svs_voicebank
     license: "CC0 synthetic vowel"
     consent_verified: true
-    model_ref: evals/fixtures/voices/donor_ah_synth.wav
+    model_ref: r9y9/yoko_latest    # NNSVS voicebank: real neural singing
 
 lanes:
   svs:

@@ -212,7 +212,28 @@ def main(argv: list[str] | None = None) -> int:
     req = json.loads(Path(args[0]).read_text(encoding="utf-8"))
     sr = int(req.get("sr", 22050))
     phonemes = req.get("phonemes")
-    audio = render(req["notes"], sr, int(req.get("seed", 0)), phonemes=phonemes)
+    lyrics = req.get("lyrics")
+    notes = req["notes"]
+    seed = int(req.get("seed", 0))
+
+    # A model_ref that is an NNSVS voicebank id (not a donor .wav path) selects real neural singing;
+    # otherwise fall back to the in-process formant articulator. Aliases: "" / "yoko" -> yoko.
+    model_ref = str(req.get("model_ref", ""))
+    engine = "formant"
+    audio = None
+    if _wants_nnsvs(model_ref) and lyrics:
+        try:
+            from voders_svs_backend.nnsvs_engine import DEFAULT_MODEL, render_nnsvs
+
+            ref = DEFAULT_MODEL if model_ref in ("", "yoko", "nnsvs") else model_ref
+            ref = ref[len("nnsvs:") :] if ref.startswith("nnsvs:") else ref
+            audio = render_nnsvs(notes, lyrics, sr, model_ref=ref)
+            engine = "nnsvs"
+        except Exception as exc:  # robust: degrade to the formant articulator, never crash the run
+            print(f"nnsvs render failed ({exc}); falling back to formant", file=sys.stderr)
+    if audio is None:
+        audio = render(notes, sr, seed, phonemes=phonemes)
+
     out_wav = req["out_wav"]
     Path(out_wav).parent.mkdir(parents=True, exist_ok=True)
     sf.write(out_wav, audio, sr, subtype="FLOAT")
@@ -221,13 +242,22 @@ def main(argv: list[str] | None = None) -> int:
             {
                 "ok": True,
                 "n_samples": int(audio.size),
-                "backend": "nnsvs",
+                "backend": engine,
                 "toolkit_available": _toolkit_available(),
-                "articulated": bool(phonemes),
+                "articulated": bool(phonemes) or engine == "nnsvs",
             }
         )
     )
     return 0
+
+
+def _wants_nnsvs(model_ref: str) -> bool:
+    """True when the voice's model_ref selects an NNSVS voicebank (id), not a donor .wav path."""
+    if not model_ref:
+        return False
+    return model_ref in ("yoko", "nnsvs") or model_ref.startswith("nnsvs:") or (
+        "/" in model_ref and not model_ref.endswith(".wav")
+    )
 
 
 if __name__ == "__main__":
