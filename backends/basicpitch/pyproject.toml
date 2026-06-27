@@ -10,9 +10,13 @@ description = "Consumer-side eval: run Basic Pitch on rendered audio and score n
 # pins 3.11 and runs out-of-process — the same pattern as the render backends.
 requires-python = ">=3.11,<3.12"
 dependencies = [
-    "basic-pitch>=0.4",
+    # The [onnx] extra ships the onnxruntime backend so Basic Pitch has a working model even when
+    # TensorFlow won't import (it has no Python 3.14 / clean aarch64 path); plain `basic-pitch`
+    # installs no backend and raises NameError(_default_model_type) at import.
+    "basic-pitch[onnx]>=0.4",
     "mir_eval>=0.7",
     "numpy<2",
+    "setuptools<81",  # resampy (pulled by basic-pitch) imports the deprecated pkg_resources
 ]
 
 [project.scripts]
