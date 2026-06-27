@@ -27,8 +27,8 @@ def test_stereo_48k_downmixes_and_resamples_to_corpus_rate() -> None:
     assert abs(out.size - expected) <= 2
 
 
-def test_equal_rate_averages_stereo_to_mono_unchanged_length() -> None:
-    """When native == target, stereo is averaged to mono and the length is unchanged."""
+def test_equal_rate_averages_stereo_to_mono_and_removes_dc() -> None:
+    """When native == target: stereo averaged to mono, DC removed, length unchanged."""
     stereo = np.array([[0.0, 2.0], [1.0, 3.0], [4.0, 4.0]], dtype=np.float32)
 
     out = bridge_to_corpus_format(stereo, SAMPLE_RATE, SAMPLE_RATE)
@@ -36,7 +36,9 @@ def test_equal_rate_averages_stereo_to_mono_unchanged_length() -> None:
     assert out.dtype == np.float32
     assert out.ndim == 1
     assert out.size == 3
-    np.testing.assert_allclose(out, [1.0, 2.0, 4.0])
+    # Averaged mono is [1, 2, 4] (mean 7/3); the DC block subtracts the mean.
+    np.testing.assert_allclose(out, np.array([1.0, 2.0, 4.0]) - 7.0 / 3.0, atol=1e-6)
+    assert abs(float(out.mean())) < 1e-6
 
 
 def test_empty_input_returns_empty_float32() -> None:
