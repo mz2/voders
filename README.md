@@ -132,11 +132,20 @@ flowchart LR
     W -- "WAV out" --> O
 ```
 
-**Neural voice models need consented weights.** Real voice conversion / neural SVS need a *trained
-voice model* for a specific singer (an RVC `.pth`, an NNSVS/DiffSinger voicebank) — large external
-assets, and exactly what the consent gate (FR-011, SC-008) governs, so the repo bundles none.
-`just download-rvc-models` fetches the RVC **base** models (HuBERT + RMVPE feature extractors — not
-a cloned voice). For a *consented* target singer, `just download-rvc-voice` fetches an
+**Real donor voices.** `just download-donors` streams one consented sample each from **VocalSet**
+and **VCTK** (both CC BY 4.0) into git-ignored `models/donors/`; `just demo-real-donor` renders the
+deterministic lane with a real human vowel instead of the synthetic fixture.
+
+**Zero-shot voice conversion (modern, no per-voice training).** `just demo-seedvc` runs **Seed-VC**
+(diffusion zero-shot VC) out-of-process (`backends/seedvc`, Python 3.10): the target voice is just a
+reference clip (a consented donor), no `.pth`. It keeps the source pitch (`--f0-condition`), so the
+labels are preserved. Other modern methods in scope (research.md Decision 8): kNN-VC, BigVGAN/Vocos
+vocoders, DiffSinger/TCSinger SVS.
+
+**Trained voice models need consented weights.** RVC needs a *trained voice model* for a specific
+singer (an RVC `.pth`) — large external assets, and exactly what the consent gate (FR-011, SC-008)
+governs, so the repo bundles none. `just download-rvc-models` fetches the RVC **base** models
+(HuBERT + RMVPE feature extractors — not a cloned voice). For a *consented* target singer, `just download-rvc-voice` fetches an
 Apache-2.0-licensed RVC model trained on **VCTK** speaker p231 (the VCTK dataset is CC BY 4.0; its
 speakers consented to open release) — a license-clean alternative to scraped celebrity clones. Point
 a voice's `model_ref` at `models/rvc/voices/Fp231rmvpe.pth` and use `backend: rvc`.

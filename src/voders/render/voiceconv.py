@@ -23,7 +23,13 @@ from voders.render.base import RenderRequest, RenderResult
 from voders.voices.models import Voice, VoiceKind
 
 _CPU_BACKENDS = frozenset({"world"})
-_SUBPROCESS_BACKENDS = frozenset({"rvc"})  # real toolkit, out-of-process (own uv project)
+# Out-of-process backends → (backend project dir under backends/, worker module). Each runs the
+# real toolkit in its own uv project. "rvc" uses a trained .pth; "seedvc" is zero-shot (model_ref
+# is a reference audio clip — e.g. a consented VocalSet/VCTK donor).
+_SUBPROCESS_BACKENDS = {
+    "rvc": ("rvc", "voders_rvc_backend.worker"),
+    "seedvc": ("seedvc", "voders_seedvc_backend.worker"),
+}
 _REPO_BACKENDS = frozenset({"sovits"})  # GitHub repo + weights, not yet wired
 
 
@@ -55,19 +61,21 @@ class VoiceConversionLane:
             if not req.voice.model_ref:
                 raise RuntimeError(
                     f"voice-conversion backend {backend!r} requires a consented target voice "
-                    "model (voice.model_ref, an RVC .pth) (FR-011)"
+                    "(voice.model_ref: an RVC .pth, or a reference clip for zero-shot seedvc) "
+                    "(FR-011)"
                 )
             base_donor = req.options.get("base_donor") or self.options.get("base_donor")
             if not base_donor:
                 raise RuntimeError(
                     f"voice-conversion backend {backend!r} needs a 'base_donor' (a donor vowel "
-                    "wav) for the WORLD source render that RVC then converts"
+                    "wav) for the WORLD source render that the converter then re-timbres"
                 )
             from voders.render.backend_bridge import convert_via_backend
 
             # 1) WORLD renders score-aligned source audio from a donor vowel (timbre irrelevant —
-            #    RVC replaces it); 2) RVC converts that audio to the target voice (model_ref),
-            #    keeping its f0 so the labels are preserved.
+            #    the converter replaces it); 2) the toolkit converts to the target voice, keeping
+            #    its f0 so the labels are preserved.
+            project, module = _SUBPROCESS_BACKENDS[backend]
             donor = Voice(
                 voice_id=f"{req.voice.voice_id}__base",
                 kind=VoiceKind.DETERMINISTIC_DONOR,
@@ -82,8 +90,8 @@ class VoiceConversionLane:
                 .audio
             )
             converted = convert_via_backend(
-                "rvc",
-                "voders_rvc_backend.worker",
+                project,
+                module,
                 base,
                 model_ref=req.voice.model_ref,
                 device=str(req.options.get("device", "auto")),
@@ -98,5 +106,5 @@ class VoiceConversionLane:
 
         raise ValueError(
             f"unknown voice-conversion backend {backend!r}; expected one of "
-            f"{sorted(_CPU_BACKENDS | _SUBPROCESS_BACKENDS | _REPO_BACKENDS)}"
+            f"{sorted(_CPU_BACKENDS | set(_SUBPROCESS_BACKENDS) | _REPO_BACKENDS)}"
         )

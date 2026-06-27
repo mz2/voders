@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voders-seedvc-backend"
+version = "0.1.0"
+description = "Out-of-process Seed-VC zero-shot voice-conversion backend for voders"
+# Seed-VC is a git repo (not a PyPI package) pinned to torch 2.4 / Python 3.10, GPL-3.0. Its deps
+# are listed here so its inference.py imports resolve; the worker clones the repo and runs it. This
+# lives in its own uv project so the GPL toolkit and old pins never touch the 3.14 core.
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "torch==2.4.0",
+    "torchaudio==2.4.0",
+    "transformers==4.46.3",
+    "descript-audio-codec==1.0.0",
+    "librosa==0.10.2",
+    "scipy==1.13.1",
+    "numpy==1.26.4",
+    "soundfile>=0.12",
+    "huggingface-hub>=0.28.1",
+    "munch==4.0.0",
+    "einops==0.8.0",
+    "hydra-core==1.3.2",
+    "pyyaml",
+]
+
+[project.scripts]
+voders-seedvc-backend = "voders_seedvc_backend.worker:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -223,3 +223,6 @@ __marimo__/
 
 # voders: downloaded model weights are never committed (large, consent-gated assets).
 /models/
+
+# Cloned third-party backend repos (fetched at runtime, not part of this repo).
+/backends/*/seed-vc/

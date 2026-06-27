@@ -99,6 +99,15 @@ demo-rvc: setup setup-rvc-backend download-rvc-models download-rvc-voice
     uv run voders run --config evals/fixtures/rvc_vctk.yaml
     uv run voders eval --manifest out/rvc_vctk/manifest.jsonl
 
+# Sync the out-of-process Seed-VC backend (zero-shot VC; its own uv project, Python 3.10).
+setup-seedvc-backend:
+    uv sync --project backends/seedvc
+
+# Zero-shot Seed-VC voice conversion using a real VocalSet reference clip.
+demo-seedvc: setup setup-seedvc-backend download-donors
+    uv run voders run --config evals/fixtures/seedvc.yaml
+    uv run voders eval --manifest out/seedvc/manifest.jsonl
+
 # Render + validate with the CREPE neural f0 estimator on the GPU (needs the `gpu` extra).
 smoke-gpu: setup-gpu
     uv run --extra cpu --extra gpu python evals/make_fixtures.py

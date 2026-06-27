@@ -1,0 +1,29 @@
+# Voice-conversion lane via the modern, zero-shot Seed-VC backend.
+# Zero-shot: the target voice is a *reference clip* (model_ref) — here a real, consented VocalSet
+# donor — so no per-voice training is needed. Fetch donors first: `just download-donors`.
+run_id: seedvc
+master_seed: 20260627
+
+scores: evals/fixtures/scores/score_000.tsv
+output_root: out/seedvc
+
+voices:
+  - voice_id: seedvc_vocalset
+    kind: voice_conversion
+    license: "Seed-VC GPL-3.0 (tool); reference: VocalSet CC BY 4.0"
+    consent_verified: true
+    model_ref: models/donors/vocalset_singer.wav   # zero-shot reference (target timbre)
+
+lanes:
+  voice_conversion:
+    enabled: true
+    backend: seedvc
+    base_donor: evals/fixtures/voices/donor_ah_synth.wav  # WORLD source render; Seed-VC re-timbres
+
+validator:
+  onset_ms: 50
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0
