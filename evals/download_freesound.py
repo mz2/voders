@@ -4,7 +4,11 @@ Run via uv with the cpu extra and a Freesound API token in the environment::
 
     export FREESOUND_API_TOKEN=...   # https://freesound.org/apiv2/apply/
     uv run --extra cpu python evals/download_freesound.py
-    uv run --extra cpu python evals/download_freesound.py --query "sustained vowel ah" --count 5
+    uv run --extra cpu python evals/download_freesound.py --query "sung vowel" --count 5
+
+Freesound AND-matches every word in ``--query``, so prefer one or two broad terms (``vowel``,
+``sung vowel``) and let the voice-tag filter below narrow the results — a long phrase like
+"sustained sung vowel ah" matches nothing.
 
 Searches Freesound for short sung/sustained vowels under a permissive license (Creative Commons 0
 by default — no attribution required, so the resulting voices pass the consent gate FR-011 cleanly),
@@ -125,7 +129,7 @@ def _load_donor_helpers():  # noqa: ANN202
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fetch donor vowels from Freesound")
-    parser.add_argument("--query", default="sustained sung vowel", help="Freesound search query")
+    parser.add_argument("--query", default="sung vowel", help="Freesound search query")
     parser.add_argument(
         "--count", type=int, default=3, help="How many sounds to fetch (default: 3)"
     )

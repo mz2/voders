@@ -145,6 +145,17 @@ entry (`kind: deterministic_donor`, `consent_verified: true`). Because you recor
 yourself, the consent gate (FR-011, SC-008) is satisfied by construction — one ~3 s vowel is enough
 for the WORLD/RVC base render. Paste the printed entry under `voices:` in your run config.
 
+**Fetch permissive donor vowels from Freesound.** `just download-freesound` searches
+[Freesound](https://freesound.org) for short sung/sustained vowels under a permissive license (CC0
+by default — no attribution required), downloads the HQ preview, resamples to 22,050 Hz mono float32,
+rejects clips that aren't clearly voiced, and writes donor WAVs under git-ignored
+`models/donors/freesound/`. Set `FREESOUND_API_TOKEN` first (get one at
+<https://freesound.org/apiv2/apply/>). Tune the search with
+`just download-freesound QUERY="sung vowel" COUNT=5 LICENSE=cc0` (use `LICENSE=by` for CC BY, whose
+attribution is recorded in `ATTRIBUTION.txt`). Each fetched sound prints a ready-to-paste `Voice`
+entry. Run `just list-donors` to see everything fetched/enrolled under `models/donors/` with its
+license and attribution.
+
 **Zero-shot voice conversion (modern, no per-voice training).** `just demo-seedvc` runs **Seed-VC**
 (diffusion zero-shot VC) out-of-process (`backends/seedvc`, Python 3.10): the target voice is just a
 reference clip (a consented donor), no `.pth`. It keeps the source pitch (`--f0-condition`), so the

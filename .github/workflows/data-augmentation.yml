@@ -1,0 +1,85 @@
+name: data-augmentation
+
+# Runs the whole data-augmentation pipeline (fixtures -> donor fetch -> render -> audit -> eval ->
+# stats) and then a stub training step. Triggered two ways:
+#   * manually from the Actions tab (workflow_dispatch), with knobs for donor count + training, and
+#   * automatically when a GitHub Release is published (i.e. a release tag is created).
+on:
+  workflow_dispatch:
+    inputs:
+      freesound_count:
+        description: "Number of Freesound donor vowels to fetch"
+        type: string
+        default: "3"
+      run_training:
+        description: "Run the (stub) training step after augmentation"
+        type: boolean
+        default: false
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  augment:
+    name: Build augmented corpus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Sync CPU environment
+        run: uv sync --extra cpu
+
+      - name: Run data-augmentation pipeline
+        # FREESOUND_API_TOKEN is optional — the fetch step is best-effort, so the pipeline still
+        # renders the synthetic + checked-in donors when the secret is absent. Add it under
+        # Settings -> Secrets -> Actions to pull live CC0 donor vowels.
+        env:
+          FREESOUND_API_TOKEN: ${{ secrets.FREESOUND_API_TOKEN }}
+        run: just augment FREESOUND_COUNT="${{ inputs.freesound_count || '3' }}"
+
+      - name: Upload augmented corpus
+        uses: actions/upload-artifact@v4
+        with:
+          name: voders-corpus
+          path: |
+            out/**
+            models/donors/freesound/ATTRIBUTION.txt
+          if-no-files-found: warn
+
+  train:
+    name: Train (stub)
+    needs: augment
+    # Always train on a release (tag); on a manual run only when the box is ticked.
+    if: ${{ github.event_name == 'release' || inputs.run_training == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Sync CPU environment
+        run: uv sync --extra cpu
+
+      - name: Download augmented corpus
+        uses: actions/download-artifact@v4
+        with:
+          name: voders-corpus
+
+      - name: Train on the augmented corpus
+        run: just train

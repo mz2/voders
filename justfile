@@ -50,6 +50,22 @@ smoke: fixtures
     uv run voders run --config {{config}}
     uv run voders eval --manifest {{manifest}}
 
+# Whole data-augmentation pipeline (what the data-augmentation Action runs): fixtures -> fetch donor
+# vowels (best-effort, needs FREESOUND_API_TOKEN) -> render -> audit -> eval -> stats.
+augment FREESOUND_COUNT="3" config=config manifest=manifest: fixtures
+    -uv run --extra cpu python evals/download_freesound.py --count {{FREESOUND_COUNT}} --license cc0
+    @just list-donors
+    uv run voders run --config {{config}}
+    uv run voders audit --manifest {{manifest}}
+    uv run voders eval --manifest {{manifest}}
+    uv run voders stats --manifest {{manifest}}
+
+# Stub for model training on the augmented corpus. Wire in the real trainer where marked.
+train manifest=manifest: setup
+    @test -f {{manifest}} || { echo "no manifest at {{manifest}} — run 'just augment' first" >&2; exit 1; }
+    @echo "[train stub] augmented corpus: $(wc -l < {{manifest}}) clip(s) in {{manifest}}"
+    @echo "[train stub] TODO: invoke the real training entrypoint here (e.g. uv run voders train ...)."
+
 # Run the full test suite.
 test: setup
     uv run pytest
@@ -90,9 +106,19 @@ download-donors:
     uv run --extra cpu --extra donors python evals/download_donors.py
 
 # Fetch CC0/CC-BY donor vowels from Freesound (needs FREESOUND_API_TOKEN). QUERY=/COUNT=/LICENSE= optional.
-download-freesound QUERY="sustained sung vowel" COUNT="3" LICENSE="cc0": setup
+download-freesound QUERY="sung vowel" COUNT="3" LICENSE="cc0": setup
     uv run --extra cpu python evals/download_freesound.py \
         --query {{quote(QUERY)}} --count {{COUNT}} --license {{LICENSE}}
+
+# Show the donor voices fetched/enrolled under models/donors/ (counts, sizes, licenses).
+list-donors:
+    @echo "== donor voices under models/donors/ (git-ignored) =="
+    @find models/donors -name '*.wav' 2>/dev/null | sort | sed 's|models/donors/|  |' || true
+    @echo "  ($(find models/donors -name '*.wav' 2>/dev/null | wc -l | tr -d ' ') WAV(s), $(du -sh models/donors 2>/dev/null | cut -f1 || echo 0) on disk)"
+    @if [ -f models/donors/freesound/ATTRIBUTION.txt ]; then \
+        echo ""; echo "== Freesound attribution / licenses =="; \
+        column -t -s$'\t' models/donors/freesound/ATTRIBUTION.txt; \
+    fi
 
 # Enroll your own consented donor vowel. Import a WAV (FILE=...) or record from the mic (RECORD=1).
 record-donor VOICE_ID FILE="" RECORD="": setup
