@@ -82,13 +82,15 @@ pack-corpus RUN_ID="donor_pool": setup
 unpack-corpus RUN_ID="donor_pool": setup
     uv run --extra cpu python evals/corpus_archive.py unpack --run-id {{RUN_ID}}
 
-# Stub for model training on the augmented corpus. Decompresses the committed OGG archive first if
-# the corpus isn't already rendered, so training needs no re-generation. Wire in the real trainer.
-train manifest="out/donor_pool/manifest.jsonl": setup
-    @test -f {{manifest}} || just unpack-corpus
+# Stub for model training on the augmented corpus. Syncs the env (set GPU=1 to add the gpu extra for
+# the CI/GPU runner), decompresses the committed OGG archive in-place if the corpus isn't already
+# rendered, then trains — so training needs no re-generation. Wire in the real trainer where marked.
+train manifest="out/donor_pool/manifest.jsonl":
+    {{ if env_var_or_default("GPU", "0") == "1" { "uv sync --extra cpu --extra gpu" } else { "uv sync --extra cpu" } }}
+    @test -f {{manifest}} || uv run --no-sync python evals/corpus_archive.py unpack
     @test -f {{manifest}} || { echo "no manifest at {{manifest}} and no archive to unpack" >&2; exit 1; }
     @echo "[train stub] augmented corpus: $(wc -l < {{manifest}}) clip(s) in {{manifest}}"
-    @echo "[train stub] TODO: invoke the real training entrypoint here (e.g. uv run voders train ...)."
+    @echo "[train stub] TODO: invoke the real trainer here (e.g. uv run --no-sync voders train ...)."
 
 # Run the full test suite.
 test: setup
