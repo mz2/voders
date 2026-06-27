@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voders-basicpitch-backend"
+version = "0.1.0"
+description = "Consumer-side eval: run Basic Pitch on rendered audio and score note-F1 vs labels"
+# Basic Pitch pins TensorFlow versions with no Python 3.14 wheels, so this consumer-eval backend
+# pins 3.11 and runs out-of-process — the same pattern as the render backends.
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "basic-pitch>=0.4",
+    "mir_eval>=0.7",
+    "numpy<2",
+]
+
+[project.scripts]
+voders-basicpitch-eval = "voders_basicpitch_backend.worker:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
