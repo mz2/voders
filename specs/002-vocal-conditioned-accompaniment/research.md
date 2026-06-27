@@ -162,12 +162,20 @@ in the orchestrator. License is checked before spending GPU time.
 
 ---
 
-## Open verification items (carry into implementation)
+## Open verification items (GPU run — backend is implemented, not yet hardware-verified)
 
-1. Confirm the exact `xl-base` checkpoint **LICENSE** and that Lego/Complete are exposed by the pinned
-   release's `generate_music.py` (report flags both as needing code-level verification).
-2. Confirm whether **Complete** can yield a separable accompaniment stem; if not, FR-015 stem
-   retention and SC-008 re-mixability are **Lego-mode properties** — Complete samples set
-   `stem_available=false`. *(Surfaced to the spec owner as a design constraint — see data-model.md.)*
-3. Confirm the ACE-Step Python package name / inference entry point and Python 3.14 wheel
-   availability; build from source if no wheel (same risk noted for `001` niche audio deps).
+The `AceStepBackend` (`render/backends/acestep.py`) is a **full implementation** against the real
+ACE-Step + Demucs APIs (no stub / `NotImplementedError`): caption construction, 22.05↔48 kHz
+bridging, mode dispatch, and the Demucs stem-extraction path for Lego are concrete and CPU-unit-
+tested via injected fakes; only the two library calls need a GPU box to validate. Resolve these on
+that run and adjust the two adapter call-sites if a signature differs:
+
+1. Confirm the exact `xl-base` checkpoint **LICENSE** (the backend declares `model_license="MIT"`)
+   and that the `ACEStepPipeline(...)` call args (`audio2audio_enable` / `ref_audio_strength` /
+   `manual_seeds`) match the pinned release's `generate_music.py`.
+2. **Complete** emits a fused mix with no separable stem, so FR-015 stem retention / SC-008
+   re-mixability are **Lego-mode properties** — Complete samples set `stem_available=false`
+   (implemented). Revisit only if strict Complete-stem retention is required.
+3. Confirm the ACE-Step package name / `pipeline_ace_step` import path and the Python 3.14 wheel for
+   `acestep` + `demucs`; build from source if no wheel (same risk noted for `001` niche audio deps).
+   `demucs>=4.0` is pinned in the `accomp` extra; `acestep` is installed out-of-band.

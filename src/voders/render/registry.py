@@ -50,6 +50,10 @@ def build_accompanist(config: RunConfig, validator: object, timing: object | Non
         except Exception as exc:  # noqa: BLE001 - any import/GPU failure → graceful skip (FR-013)
             _LOG.warning("accompaniment: acestep backend unavailable (%s) — skipping lane", exc)
             return None
+        preflight = backend.preflight(options.mode)
+        if preflight is not None:
+            _LOG.warning("accompaniment: %s — skipping lane", preflight)
+            return None
     else:
         _LOG.warning("accompaniment: unknown backend %r — skipping lane", options.backend)
         return None
