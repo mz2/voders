@@ -33,6 +33,7 @@ from voders.constants import SAMPLE_RATE
 from voders.seeds import rng as rng_for_seed
 
 _EPS = 1e-12
+_last_stretch_factor: float = 1.0
 
 # A step takes (vocal, accompaniment_or_None, rng, params) and returns
 # (new_vocal, new_accompaniment_or_None). Accompaniment is carried as a separate stem so the
@@ -160,10 +161,48 @@ def _step_accompaniment_mix(
     return vocal, new_accomp
 
 
+def _step_time_stretch(
+    vocal: np.ndarray,
+    accomp: np.ndarray | None,
+    rng: np.random.Generator,
+    params: dict[str, object],
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Time-stretch the vocal with pyrubberband WITHOUT shifting pitch.
+
+    ``params["stretch_factor"]`` sets the factor directly:
+      < 1.0  -> shorter / faster  (e.g. 0.75 = 25% faster)
+      > 1.0  -> longer  / slower  (e.g. 1.25 = 25% slower)
+      = 1.0  -> no change (passthrough)
+
+    Internally pyrubberband uses the inverse (1/factor), but the caller
+    always works with the intuitive factor: 1.25 = 25% longer/slower.
+    The stretch factor is returned by ``AugmentationChain.apply`` to the
+    caller, which MUST scale the paired score's onset_s/offset_s columns
+    by the same factor to keep labels correct.
+    """
+    import pyrubberband as rb  # lazy import — keeps torch-free baseline intact # NEW
+
+    factor = _as_float(params.get("stretch_factor"), 1.0)
+    if factor <= 0.0:
+        factor = 1.0  # guard against bad config
+
+    if abs(factor - 1.0) < 1e-6:
+        return vocal, accomp  # nothing to do
+
+    stretched = rb.time_stretch(vocal.astype(np.float64), SAMPLE_RATE, 1.0 / factor)
+    stretched = stretched.astype(np.float32)
+
+    # Attach the factor so apply() can surface it to the caller.
+    global _last_stretch_factor
+    _last_stretch_factor = factor
+    return stretched, accomp
+
+
 _STEPS: dict[str, StepFn] = {
     "reverb_ir": _step_reverb_ir,
     "codec": _step_codec,
     "accompaniment_mix": _step_accompaniment_mix,
+    "time_stretch": _step_time_stretch,
 }
 
 
@@ -212,6 +251,10 @@ class AugmentationChain:
                 continue
             vocal, accomp = step(vocal, accomp, rng, profile.params)
 
+        global _last_stretch_factor
+        stretch_factor: float = _last_stretch_factor
+        _last_stretch_factor = 1.0
+
         snr_db: float | None = None
         if accomp is not None:
             rms_vocal = _rms(vocal)
@@ -228,4 +271,4 @@ class AugmentationChain:
         if peak > 0.99:
             mixed = mixed * (0.99 / peak)
 
-        return to_mono_float32(mixed), snr_db
+        return to_mono_float32(mixed), snr_db, stretch_factor

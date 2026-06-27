@@ -81,3 +81,22 @@ def serialize_score(score: Score) -> bytes:
     """
     lines = [f"{n.onset_s:.6f}\t{n.offset_s:.6f}\t{n.pitch_midi}" for n in score.notes]
     return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def scale_score_timestamps(score: Score, factor: float) -> Score:
+    """Return a new Score with all onset_s and offset_s multiplied by ``factor``.
+
+    Used after time-stretching audio so the paired TSV stays aligned:
+      factor < 1.0 -> notes shift earlier (audio is shorter/faster)
+      factor > 1.0 -> notes shift later  (audio is longer/slower)
+    pitch_midi is unchanged — time-stretch does not affect pitch.
+    """
+    scaled_notes = [
+        Note(
+            onset_s=n.onset_s * factor,
+            offset_s=n.offset_s * factor,
+            pitch_midi=n.pitch_midi,
+        )
+        for n in score.notes
+    ]
+    return Score(score_id=score.score_id, source=score.source, notes=scaled_notes)

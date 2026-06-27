@@ -43,7 +43,7 @@ def test_chain_satisfies_augmentor_protocol() -> None:
 def test_apply_returns_float32_audio_and_finite_snr(small_score, donor_ah) -> None:
     """apply() returns float32 audio and a finite vocal-to-accompaniment SNR (FR-005/FR-014)."""
     audio, _ = _base_render(small_score, donor_ah)
-    out, snr_db = _chain().apply(audio, "pop_mix", seed=7)
+    out, snr_db, _ = _chain().apply(audio, "pop_mix", seed=7)
 
     assert out.dtype == np.float32
     assert out.ndim == 1
@@ -58,7 +58,7 @@ def test_labels_preserved_after_augmentation(small_score, donor_ah) -> None:
     Onset/offset alignment must still hold for the augmented audio (FR-005).
     """
     audio, label_score = _base_render(small_score, donor_ah)
-    out, snr_db = _chain().apply(audio, "pop_mix", seed=7)
+    out, snr_db, _ = _chain().apply(audio, "pop_mix", seed=7)
 
     verdict = Validator(ValidatorConfig(snr_floor_db=0.0), min_note_ms=50.0).validate(
         out, label_score, snr_db=snr_db
@@ -71,8 +71,8 @@ def test_apply_is_deterministic_from_seed(small_score, donor_ah) -> None:
     """Same seed -> byte-identical arrays (FR-013)."""
     audio, _ = _base_render(small_score, donor_ah)
     chain = _chain()
-    out_a, snr_a = chain.apply(audio, "pop_mix", seed=99)
-    out_b, snr_b = chain.apply(audio, "pop_mix", seed=99)
+    out_a, snr_a, _ = chain.apply(audio, "pop_mix", seed=99)
+    out_b, snr_b, _ = chain.apply(audio, "pop_mix", seed=99)
 
     assert np.array_equal(out_a, out_b)
     assert snr_a == snr_b
@@ -86,10 +86,28 @@ def test_low_snr_accompaniment_quarantines(small_score, donor_ah) -> None:
         steps=["accompaniment_mix"],
         params={"snr_db": [-30.0]},
     )
-    out, snr_db = AugmentationChain([profile]).apply(audio, "loud_band", seed=1)
+    out, snr_db, _ = AugmentationChain([profile]).apply(audio, "loud_band", seed=1)
 
     assert snr_db is not None and snr_db < 0.0
     verdict = Validator(ValidatorConfig(snr_floor_db=0.0), min_note_ms=50.0).validate(
         out, label_score, snr_db=snr_db
     )
     assert verdict.status == VerdictStatus.QUARANTINED
+
+
+def test_time_stretch_returns_correct_factor_and_scaled_length(small_score, donor_ah) -> None:
+    """time_stretch step returns stretch_factor != 1.0 and audio length scales accordingly."""
+    audio, _ = _base_render(small_score, donor_ah)
+    profile = AugmentationProfileConfig(
+        profile_id="stretch_test",
+        steps=["time_stretch"],
+        params={"stretch_factor": 1.25},
+    )
+    out, snr_db, stretch_factor = AugmentationChain([profile]).apply(audio, "stretch_test", seed=0)
+
+    assert stretch_factor == 1.25
+    assert out.dtype == np.float32
+    # audio should be ~25% longer (allow 5% tolerance for rubberband rounding)
+    expected_len = audio.size * 1.25
+    assert abs(out.size - expected_len) / expected_len < 0.05
+    assert snr_db is None  # no accompaniment_mix step ran

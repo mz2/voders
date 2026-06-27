@@ -19,7 +19,13 @@ from voders.manifest.models import ProvenanceRecord, ValidationVerdict, VerdictS
 from voders.render.augmentor import Augmentor
 from voders.render.base import RendererLane, RenderRequest, RenderResult
 from voders.scores.analyze import LearnedThreshold, learn_min_note_ms
-from voders.scores.parse import ParsedScore, PolyphonyError, parse_tsv, serialize_score
+from voders.scores.parse import (
+    ParsedScore,
+    PolyphonyError,
+    parse_tsv,
+    scale_score_timestamps,
+    serialize_score,
+)
 from voders.seeds import sample_seed
 from voders.validate.timing import TimingRegistry
 from voders.validate.validator import Validator
@@ -190,12 +196,23 @@ class Orchestrator:
         seed = sample_seed(
             self.config.master_seed, ps.score.score_id, voice.voice_id, f"augment_{profile_id}"
         )
-        audio, snr_db = self.augmentor.apply(result.audio, profile_id, seed)
-        verdict = validator.validate(audio, result.label_score, snr_db=snr_db)
-        # Labels are unchanged by augmentation (FR-005): keep the byte-identical .tsv.
-        score_tsv = (
-            ps.raw_bytes if result.label_score == ps.score else serialize_score(result.label_score)
-        )
+        audio, snr_db, stretch_factor = self.augmentor.apply(result.audio, profile_id, seed)
+        scaled = scale_score_timestamps(result.label_score, stretch_factor)
+        verdict = validator.validate(audio, scaled, snr_db=snr_db)
+
+        # if time_stretch ran, scale onset_s/offset_s by stretch_factor so TSV stays aligned.
+        if abs(stretch_factor - 1.0) < 1e-6:
+            # No stretch — labels unchanged (FR-005): keep byte-identical .tsv.
+            score_tsv = (
+                ps.raw_bytes
+                if result.label_score == ps.score
+                else serialize_score(result.label_score)
+            )
+        else:
+            # Stretch applied — scale all timestamps by the same factor.
+            scaled = scale_score_timestamps(result.label_score, stretch_factor)
+            score_tsv = serialize_score(scaled)
+
         record = ProvenanceRecord(
             sample_id=sample_id,
             score_id=ps.score.score_id,

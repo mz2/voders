@@ -16,6 +16,34 @@ lanes:
   deterministic:
     enabled: true
     synth: world
+  augmentation:
+    enabled: true
+
+augmentation_profiles:
+  - profile_id: stretch_faster_small_1
+    steps: [time_stretch]
+    params:
+      stretch_factor: 0.90
+  - profile_id: stretch_faster_small_2
+    steps: [time_stretch]
+    params:
+      stretch_factor: 0.92
+  - profile_id: stretch_faster_small_3
+    steps: [time_stretch]
+    params:
+      stretch_factor: 0.95
+  - profile_id: stretch_slower_small_1
+    steps: [time_stretch]
+    params:
+      stretch_factor: 1.05
+  - profile_id: stretch_slower_small_2
+    steps: [time_stretch]
+    params:
+      stretch_factor: 1.08
+  - profile_id: stretch_slower_small_3
+    steps: [time_stretch]
+    params:
+      stretch_factor: 1.10
 
 validator:
   onset_ms: 50
