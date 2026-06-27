@@ -9,7 +9,7 @@ Backends (``options["backend"]``):
 * ``"world"`` (default, CPU): delegates to the deterministic WORLD lane, which builds f0 directly
   from the score and uses the voice's donor recording as the timbre source. No GPU, no ``torch``.
 * ``"rvc"``: the real RVC toolkit, run **out of process** in its own uv project (``backends/rvc``,
-  Python 3.11) via :mod:`voders.render.backend_bridge`. The core renders score-aligned audio with
+  Python 3.10) via :mod:`voders.render.backend_bridge`. The core renders score-aligned audio with
   WORLD, then RVC converts only the timbre using a *consented* target voice model
   (``voice.model_ref``, an RVC ``.pth``); RVC keeps the input audio's f0, so the labels are
   preserved (``auto_predict_f0=False`` equivalent).
@@ -20,6 +20,7 @@ Backends (``options["backend"]``):
 from __future__ import annotations
 
 from voders.render.base import RenderRequest, RenderResult
+from voders.voices.models import Voice, VoiceKind
 
 _CPU_BACKENDS = frozenset({"world"})
 _SUBPROCESS_BACKENDS = frozenset({"rvc"})  # real toolkit, out-of-process (own uv project)
@@ -56,10 +57,30 @@ class VoiceConversionLane:
                     f"voice-conversion backend {backend!r} requires a consented target voice "
                     "model (voice.model_ref, an RVC .pth) (FR-011)"
                 )
+            base_donor = req.options.get("base_donor") or self.options.get("base_donor")
+            if not base_donor:
+                raise RuntimeError(
+                    f"voice-conversion backend {backend!r} needs a 'base_donor' (a donor vowel "
+                    "wav) for the WORLD source render that RVC then converts"
+                )
             from voders.render.backend_bridge import convert_via_backend
 
-            # Render score-aligned base audio in-process, then convert only its timbre with RVC.
-            base = DeterministicLane().render(req).audio
+            # 1) WORLD renders score-aligned source audio from a donor vowel (timbre irrelevant —
+            #    RVC replaces it); 2) RVC converts that audio to the target voice (model_ref),
+            #    keeping its f0 so the labels are preserved.
+            donor = Voice(
+                voice_id=f"{req.voice.voice_id}__base",
+                kind=VoiceKind.DETERMINISTIC_DONOR,
+                consent_verified=True,
+                model_ref=str(base_donor),
+            )
+            base = (
+                DeterministicLane()
+                .render(
+                    RenderRequest(score=req.score, voice=donor, seed=req.seed, options=req.options)
+                )
+                .audio
+            )
             converted = convert_via_backend(
                 "rvc",
                 "voders_rvc_backend.worker",

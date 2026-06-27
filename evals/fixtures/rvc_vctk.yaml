@@ -1,0 +1,29 @@
+# Voice-conversion lane via the real RVC backend, using a consented target voice.
+# Voice: VCTK speaker p231 (Apache-2.0 RVC model; VCTK dataset is CC BY 4.0, speakers consented).
+# Fetch the model first: `just download-rvc-voice`; sync the backend: `just setup-rvc-backend`.
+run_id: rvc_vctk
+master_seed: 20260627
+
+scores: evals/fixtures/scores/score_00[0-1].tsv
+output_root: out/rvc_vctk
+
+voices:
+  - voice_id: vctk_p231
+    kind: voice_conversion
+    license: "RVC model Apache-2.0 (Nekochu/RVC-VCTK_Voice-sample); VCTK CC BY 4.0, speaker p231"
+    consent_verified: true
+    model_ref: models/rvc/voices/Fp231rmvpe.pth
+
+lanes:
+  voice_conversion:
+    enabled: true
+    backend: rvc
+    base_donor: evals/fixtures/voices/donor_ah_synth.wav  # WORLD source render; RVC replaces timbre
+
+validator:
+  onset_ms: 50
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0

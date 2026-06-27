@@ -143,5 +143,10 @@ def convert_via_backend(
         result = _run_worker(name, module, {}, [req_path], timeout_s)
         if not result.get("ok"):
             raise RuntimeError(f"backend {name!r}: {result.get('error', 'conversion failed')}")
-        converted, _ = read_wav(out_wav)
+        converted, csr = read_wav(out_wav)
+        if csr != sr:
+            # Conversion backends (RVC) emit at their own target rate; bring it back to 22,050 Hz.
+            import librosa
+
+            converted = librosa.resample(converted, orig_sr=csr, target_sr=sr)
         return converted
