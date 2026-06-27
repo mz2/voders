@@ -1,0 +1,29 @@
+# GPU smoke: deterministic render validated with the CREPE neural f0 estimator on the GPU.
+# Requires the `gpu` extra (torch + torchcrepe). Run via `just smoke-gpu`.
+run_id: smoke_gpu
+master_seed: 20260627
+
+scores: evals/fixtures/scores/score_00[0-2].tsv
+output_root: out/smoke_gpu
+
+voices:
+  - voice_id: donor_ah_synth
+    kind: deterministic_donor
+    license: "CC0 synthetic vowel"
+    consent_verified: true
+    model_ref: evals/fixtures/voices/donor_ah_synth.wav
+
+lanes:
+  deterministic:
+    enabled: true
+    synth: world
+
+validator:
+  onset_ms: 50
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0
+  f0_method: crepe_f0   # neural f0 on the GPU (CPU baseline uses pyin_f0)
+  f0_device: cuda

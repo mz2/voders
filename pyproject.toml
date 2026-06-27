@@ -1,0 +1,93 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voders"
+version = "0.1.0"
+description = "Synthetic singing corpus generator — (audio, score) pairs whose labels are correct by construction"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "numpy>=2.4",
+    "scipy>=1.18",
+    "soundfile>=0.14",
+    "pyyaml>=6.0.3",
+    "pydantic>=2.13",
+]
+
+[project.optional-dependencies]
+# CPU baseline: deterministic lane + validator + augmentation + manifest. No GPU/torch.
+cpu = [
+    "librosa>=0.11",
+    # librosa pulls numba; force a build with Python 3.14 wheels (older numba caps at <3.10).
+    "numba>=0.61",
+    "pyworld>=0.3.5",
+    "pretty_midi>=0.2.11",
+    "music21>=10.5",
+    # pyworld 0.3.5 imports the (deprecated) pkg_resources at module load.
+    "setuptools<81",
+]
+# GPU lanes (neural SVS, voice conversion). Imported lazily so the CPU baseline is unaffected.
+gpu = [
+    "torch>=2.12",
+    "torchaudio",
+    "torchcrepe>=0.0.24",
+]
+dev = [
+    "ruff>=0.15",
+    "mypy>=2.1",
+    "pytest>=9.1",
+]
+# Streaming fetch of real donor voices (VocalSet / VCTK) for `evals/download_donors.py`.
+donors = [
+    "datasets>=2.19",
+    "librosa>=0.11",
+]
+
+[project.scripts]
+voders = "voders.cli.__main__:main"
+
+[dependency-groups]
+# uv-managed dev tooling (Constitution: Python Tooling — uv). `uv sync` installs this group.
+dev = [
+    "ruff>=0.15",
+    "mypy>=2.1",
+    "pytest>=9.1",
+]
+
+[tool.uv]
+# Default to the CPU baseline so `uv sync` yields a runnable laptop install (FR-009).
+default-groups = ["dev"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "evals"]
+target-version = "py313"
+
+[tool.ruff.lint]
+# Zero-warning lint (Constitution Principle II).
+select = ["E", "F", "I", "UP", "B", "W", "C4", "SIM"]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+
+[tool.mypy]
+python_version = "3.13"
+packages = ["voders"]
+mypy_path = "src"
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    # pyworld imports the deprecated pkg_resources at module load (upstream, not our code).
+    "ignore:pkg_resources is deprecated:UserWarning",
+]

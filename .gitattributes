@@ -1,0 +1,25 @@
+# Binary assets tracked via Git LFS — see "Binary Assets & Large Files" in
+# .specify/memory/constitution.md. Only small versioned assets (test fixtures,
+# default impulse responses, golden eval outputs) belong here; generated corpora
+# are never committed.
+
+# Audio
+*.wav   filter=lfs diff=lfs merge=lfs -text
+*.flac  filter=lfs diff=lfs merge=lfs -text
+*.mp3   filter=lfs diff=lfs merge=lfs -text
+*.ogg   filter=lfs diff=lfs merge=lfs -text
+*.opus  filter=lfs diff=lfs merge=lfs -text
+*.aif   filter=lfs diff=lfs merge=lfs -text
+*.aiff  filter=lfs diff=lfs merge=lfs -text
+
+# Model checkpoints / weights
+*.pt           filter=lfs diff=lfs merge=lfs -text
+*.pth          filter=lfs diff=lfs merge=lfs -text
+*.ckpt         filter=lfs diff=lfs merge=lfs -text
+*.onnx         filter=lfs diff=lfs merge=lfs -text
+*.safetensors  filter=lfs diff=lfs merge=lfs -text
+*.bin          filter=lfs diff=lfs merge=lfs -text
+
+# Misc binary
+*.npy  filter=lfs diff=lfs merge=lfs -text
+*.npz  filter=lfs diff=lfs merge=lfs -text

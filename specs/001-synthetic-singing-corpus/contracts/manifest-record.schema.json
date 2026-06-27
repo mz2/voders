@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProvenanceRecord",
+  "description": "One line of manifest.jsonl — provenance for one attempted sample (FR-008). One record per accepted AND non-accepted sample (FR-006a).",
+  "type": "object",
+  "required": [
+    "sample_id", "score_id", "score_path", "audio_path", "lane",
+    "voice_id", "seed", "voice_license", "consent_verified", "verdict", "config_hash"
+  ],
+  "properties": {
+    "sample_id": { "type": "string", "description": "e.g. score_000123_singer_A" },
+    "score_id": { "type": "string" },
+    "score_path": { "type": "string", "description": ".tsv with note rows byte-identical to label score (FR-002)" },
+    "audio_path": { "type": "string", "description": "22050 Hz mono float32 WAV" },
+    "lane": { "type": "string", "enum": ["deterministic", "svs", "voice_conversion", "augmentation"] },
+    "voice_id": { "type": "string" },
+    "augmentation_profile": { "type": ["string", "null"] },
+    "seed": { "type": "integer", "description": "derived per-sample seed (FR-013)" },
+    "voice_license": { "type": "string" },
+    "consent_verified": { "type": "boolean", "description": "false/missing -> license_refused (FR-011, SC-008)" },
+    "config_hash": { "type": "string", "description": "hash of resolved RunConfig (FR-016)" },
+    "verdict": {
+      "type": "object",
+      "required": ["status", "onset_ok", "offset_ok", "f0_ok", "max_onset_dev_ms"],
+      "properties": {
+        "status": { "type": "string", "enum": ["accepted", "rejected", "quarantined", "flagged", "license_refused"] },
+        "onset_ok": { "type": "boolean" },
+        "offset_ok": { "type": "boolean" },
+        "f0_ok": { "type": "boolean" },
+        "snr_db": { "type": ["number", "null"] },
+        "reason": { "type": ["string", "null"] },
+        "max_onset_dev_ms": { "type": "number", "description": "for SC-010 on the expressive lane" }
+      }
+    }
+  }
+}
