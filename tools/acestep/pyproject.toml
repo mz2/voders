@@ -1,0 +1,66 @@
+# Standalone uv project for the ACE-Step accompaniment backend (spec 002).
+#
+# ACE-Step (real package `ace_step` v0.2.0, Apache-2.0) pins a stack (soundfile==0.13.1,
+# transformers==4.50, spacy==3.8.4, pytorch_lightning, cutlet→mojimoji) that conflicts with the main
+# `voders` project's deps and has no Python 3.14 / linux-aarch64 wheels. So it lives here as its own
+# uv project (Python 3.12, its own uv.lock) and the backend drives it as a subprocess via
+# `acestep_runner.py`. Build it exactly like the rest of the project's uv envs:
+#
+#     cd tools/acestep && uv sync
+#     export VODERS_ACESTEP_PYTHON="$PWD/.venv/bin/python"   # or let the backend auto-detect it
+#
+# The `[tool.uv] override-dependencies` block neutralizes ACE-Step's aarch64-hostile pins (verified
+# resolvable + runnable on a DGX Spark / NVIDIA GB10, CUDA 13, torch 2.12+cu130).
+
+[project]
+name = "voders-acestep-env"
+version = "0.1.0"
+description = "Isolated, uv-managed ACE-Step environment for the voders accompaniment backend"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "ace-step",
+    # Torch stack (cu130 wheels resolve for linux-aarch64 + Blackwell sm_121).
+    "torch>=2.12",
+    "torchaudio>=2.11",
+    "torchvision>=0.27",        # acestep.music_dcae imports torchvision.transforms at load
+    # Model + inference stack.
+    "diffusers>=0.33.0",
+    "transformers>=4.50",
+    "huggingface_hub",
+    "accelerate>=1.6",
+    "safetensors",
+    "einops",
+    "omegaconf",
+    "pytorch_lightning>=2.5",
+    # Audio I/O (the runner routes torchaudio.load/save through soundfile to avoid torchcodec/FFmpeg).
+    "soundfile>=0.14",
+    "librosa>=0.11",
+    "numba>=0.61",              # modern numba/llvmlite ship aarch64 + py3.12 wheels
+    "llvmlite>=0.44",
+    # Lyric/text tokenizer deps imported at pipeline load (Japanese cutlet/fugashi excluded below).
+    "spacy>=3.8",
+    "hangul-romanize",
+    "num2words",
+    "pypinyin",
+    "py3langid",
+    "loguru",
+    "tqdm",
+]
+
+[tool.uv.sources]
+ace-step = { git = "https://github.com/ace-step/ACE-Step.git" }
+
+[tool.uv]
+# Override ACE-Step's pins that are unbuildable/unavailable on linux-aarch64. A `; sys_platform ==
+# 'never'` marker is uv's idiom for dropping a transitive dependency entirely.
+override-dependencies = [
+    "soundfile>=0.14",                       # ACE-Step pins ==0.13.1
+    "spacy>=3.8",                            # ACE-Step pins ==3.8.4 (no aarch64 wheel)
+    "numba>=0.61",                           # avoid the ancient numba/llvmlite ACE-Step would pull
+    "cutlet; sys_platform == 'never'",       # Japanese romanizer → mojimoji C-ext (no aarch64 wheel)
+    "mojimoji; sys_platform == 'never'",     # needs Python.h to build; only used for Japanese lyrics
+    "fugashi; sys_platform == 'never'",      # MeCab binding; Japanese only, not needed for instrumental
+    "gradio; sys_platform == 'never'",       # web UI; not needed for headless inference
+    "tensorboard; sys_platform == 'never'",  # training only
+    "tensorboardX; sys_platform == 'never'", # training only
+]

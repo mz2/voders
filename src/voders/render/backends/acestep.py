@@ -77,6 +77,25 @@ def _runner_path() -> str:
     return os.path.join(os.path.dirname(__file__), "acestep_runner.py")
 
 
+def _discover_acestep_python() -> str | None:
+    """Locate the uv-managed ACE-Step env's python (``tools/acestep/.venv/bin/python``).
+
+    Walks up from this module to the repo root and checks for the standalone ACE-Step uv project's
+    interpreter, so a contributor who ran ``cd tools/acestep && uv sync`` needs no env var. The
+    ``VODERS_ACESTEP_PYTHON`` env var still overrides this.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(8):
+        candidate = os.path.join(here, "tools", "acestep", ".venv", "bin", "python")
+        if os.path.exists(candidate):
+            return candidate
+        parent = os.path.dirname(here)
+        if parent == here:
+            break
+        here = parent
+    return None
+
+
 class _AceStepGenerator:
     """Real ACE-Step adapter via subprocess into the ACE-Step environment.
 
@@ -211,7 +230,9 @@ class AceStepBackend:
         separator: SeparatorFn | None = None,
     ) -> None:
         self.model_id = model_id or "ace-step-v1-3.5b"
-        self.acestep_python = acestep_python or os.environ.get("VODERS_ACESTEP_PYTHON")
+        self.acestep_python = (
+            acestep_python or os.environ.get("VODERS_ACESTEP_PYTHON") or _discover_acestep_python()
+        )
         self.checkpoint_dir = checkpoint_dir or os.environ.get("VODERS_ACESTEP_CHECKPOINT") or None
         self.device_id = device_id
         self.cpu_offload = cpu_offload

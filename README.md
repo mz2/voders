@@ -66,13 +66,18 @@ An optional post-acceptance stage lays instrumental backing under an accepted vo
 the sung-note timing**, so the score still labels the result. Two modes: **lego** (vocal-preserving —
 a generated accompaniment "stem" summed under the untouched vocal; the vocal stays bit-exact and the
 stem is kept for re-mixing) and **complete** (one-pass full mix, mild vocal coloration). Admission is
-decided on the final mix. Enable it via the `accompaniment` lane in a run config; the CPU **fake**
-backend runs in CI, and the GPU **ACE-Step 1.5 XL** backend uses the `accomp` extra. Example:
+decided on the final mix. Enable it via the `accompaniment` lane in a run config. The CPU **fake** backend runs in CI:
 
 ```bash
 uv run voders run  --config evals/fixtures/accompaniment-smoke.yaml   # fake backend, no GPU
 uv run voders eval --manifest out/accompaniment_smoke/manifest.jsonl  # SC-001/002/004/005/008
 ```
+
+The real **ACE-Step** backend (`ACE-Step/ACE-Step-v1-3.5B`, Apache-2.0) runs on GPU. It can't share
+this project's environment (conflicting pins, no Python 3.14 / aarch64 wheels), so it lives as a
+standalone uv project under `tools/acestep/`; `cd tools/acestep && uv sync` builds it and the backend
+auto-detects it. Lego mode also uses Demucs from this project's `accomp` extra
+(`uv sync --extra accomp`). See `specs/002-vocal-conditioned-accompaniment/quickstart.md`.
 
 ## Quickstart
 

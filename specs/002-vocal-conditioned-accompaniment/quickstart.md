@@ -25,26 +25,23 @@ output dir. The smoke config uses `backend: fake` so it needs no GPU.
 ### Real ACE-Step backend (GPU)
 
 ACE-Step (`ACE-Step/ACE-Step-v1-3.5B`, Apache-2.0) pins deps that conflict with this project and lack
-Python 3.14 / aarch64 wheels, so it runs in **its own venv** and the backend drives it via subprocess.
-Set up that venv once, then point the backend at it:
+Python 3.14 / aarch64 wheels, so it lives as a **standalone uv project** under `tools/acestep/`
+(Python 3.12, its own `uv.lock`) and the backend drives it via subprocess. Build it exactly like the
+rest of the project's uv envs:
 
 ```bash
-# 1. ACE-Step in its own environment (Python 3.12), driven via subprocess.
-uv venv --python 3.12 /opt/acestep-venv
-uv pip install --python /opt/acestep-venv --no-deps git+https://github.com/ace-step/ACE-Step.git
-uv pip install --python /opt/acestep-venv torch torchaudio torchvision torchcodec diffusers \
-  transformers huggingface_hub accelerate safetensors einops omegaconf "numba>=0.61" soundfile \
-  librosa loguru tqdm pypinyin py3langid pytorch_lightning "spacy>=3.8" hangul-romanize num2words
-# 2. Demucs (Lego separation) lives in this project's accomp extra.
-uv sync --extra cpu --extra accomp
-# 3. Tell the backend where ACE-Step's python is (weights auto-download from HF on first run).
-export VODERS_ACESTEP_PYTHON=/opt/acestep-venv/bin/python
+cd tools/acestep && uv sync && cd -      # ACE-Step env (weights auto-download from HF on first run)
+uv sync --extra cpu --extra accomp       # Demucs (Lego separation) in this project's accomp extra
 ```
 
-> On a host whose torchaudio routes I/O through `torchcodec` without a matching FFmpeg, the runner
-> already falls back to `soundfile` for audio load/save — no system FFmpeg needed.
+That's it — the backend **auto-detects** `tools/acestep/.venv/bin/python`, so no env var is needed
+(override with `VODERS_ACESTEP_PYTHON` if you keep the ACE-Step env elsewhere). Weights cache to
+`~/.cache/ace-step`; set `VODERS_ACESTEP_CHECKPOINT` to pin a local checkpoint dir.
 
-To use the real model, install the extra and set `backend: acestep` (GPU required):
+> On a host whose torchaudio routes I/O through `torchcodec` without a matching FFmpeg, the runner
+> falls back to `soundfile` for audio load/save — no system FFmpeg needed.
+
+To use the real model, set `backend: acestep` in the run config (GPU required):
 
 ```yaml
 lanes:

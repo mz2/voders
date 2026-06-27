@@ -97,18 +97,21 @@ def test_caption_metered_includes_bpm():
 
 
 def test_preflight_skips_when_backend_unavailable():
-    # When torch/CUDA or the ACE-Step package is missing, the real backend reports a skip reason so
-    # the lane degrades gracefully (FR-013) instead of crashing mid-run. preflight() must NEVER
-    # raise — any torch import/init failure is caught and turned into a skip reason.
-    reason = AceStepBackend().preflight("lego")
+    # When the ACE-Step env can't be found, the backend reports a skip reason so the lane degrades
+    # gracefully (FR-013) instead of crashing mid-run. Force a missing env (a configured host may
+    # have a real one) with an explicit bogus interpreter path.
+    reason = AceStepBackend(acestep_python="/nonexistent/acestep/python").preflight("complete")
     assert reason is not None and isinstance(reason, str)
 
 
-def test_build_accompanist_skips_acestep_when_unavailable():
+def test_build_accompanist_skips_acestep_when_unavailable(monkeypatch):
     from voders.config.models import LaneToggle, RunConfig, ValidatorConfig
     from voders.render.registry import build_accompanist
     from voders.validate.validator import Validator
 
+    # Force the ACE-Step env to look absent regardless of the host (override the env var + the
+    # auto-detected tools/acestep/.venv).
+    monkeypatch.setenv("VODERS_ACESTEP_PYTHON", "/nonexistent/acestep/python")
     config = RunConfig(
         run_id="t",
         master_seed=1,
