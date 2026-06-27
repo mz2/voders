@@ -66,13 +66,24 @@ def text_to_phonemes(text: str, *, backend: str = "espeak") -> list[str]:
     """
     try:
         from phonemizer import phonemize  # lazy: not imported on the CPU baseline (FR-005)
+        from phonemizer.separator import Separator
     except ImportError as exc:  # pragma: no cover - exercised only without the optional extra
         raise RuntimeError(
             "G2P requires the 'lyrics' extra (phonemizer) and espeak-ng; "
             "install with `uv sync --extra lyrics` and `apt install espeak-ng`"
         ) from exc
-    out = phonemize([text], language="en-us", backend=backend, strip=True)
-    return [p for p in str(out[0]).split() if p] if out else []
+    # A phone separator makes espeak emit one phoneme per token ("la" -> "l|æ"), so the nucleus
+    # split in :func:`map_syllable` sees individual phonemes rather than a single fused string.
+    out = phonemize(
+        [text],
+        language="en-us",
+        backend=backend,
+        separator=Separator(phone="|", word=" "),
+        strip=True,
+    )
+    if not out:
+        return []
+    return [p for p in str(out[0]).replace(" ", "|").split("|") if p]
 
 
 def phoneme_runs(plan_syllables: list[str | None], score: Score) -> list[PhonemeRun]:

@@ -92,6 +92,29 @@ class SvsLane:
         has_lyrics = req.lyrics is not None and any(s for s in req.lyrics)
         return has_lyrics and backend in _ARTICULATING_BACKENDS
 
+    @staticmethod
+    def _phoneme_payload(req: RenderRequest, score: Score) -> list[dict] | None:
+        """Core-side G2P (espeak) -> per-note phoneme runs for the backend to articulate (L3).
+
+        Returns ``None`` when there are no lyrics (open-vowel render). Lazily imports the G2P module
+        so the CPU baseline never loads phonemizer/espeak (FR-005).
+        """
+        if not (req.lyrics is not None and any(s for s in req.lyrics)):
+            return None
+        from voders.lyrics.g2p import phoneme_runs
+
+        runs = phoneme_runs(req.lyrics, score)
+        return [
+            {
+                "note_index": r.note_index,
+                "phonemes": r.phonemes,
+                "lead": r.lead_consonants,
+                "tail": r.tail_consonants,
+                "nucleus_onset_s": r.nucleus_onset_s,
+            }
+            for r in runs
+        ]
+
     def _render_audio(self, req: RenderRequest, score: Score, backend: str) -> np.ndarray:
         """Render audio for ``score`` with the selected backend (in-process or out-of-process)."""
         if backend in _SUBPROCESS_BACKENDS:
@@ -104,6 +127,7 @@ class SvsLane:
                 req.seed,
                 model_ref=req.voice.model_ref,
                 lyrics=req.lyrics,
+                phonemes=self._phoneme_payload(req, score),
             )
         from voders.render.deterministic import DeterministicLane
 

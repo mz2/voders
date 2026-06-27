@@ -48,6 +48,7 @@ def render_via_backend(
     sr: int = SAMPLE_RATE,
     timeout_s: float = 300.0,
     lyrics: list[str | None] | None = None,
+    phonemes: list[dict] | None = None,
 ) -> np.ndarray:
     """Render ``score`` in the backend project ``name`` and return the audio.
 
@@ -72,9 +73,12 @@ def render_via_backend(
             "model_ref": model_ref,
             "mode": mode,
         }
-        # Optional per-note syllables for an articulating SVS backend (FR-006); absent => vowel.
+        # Optional per-note syllables + core-side G2P phonemes for an articulating SVS backend
+        # (FR-006, Decision L3); absent => the backend sings an open vowel.
         if lyrics is not None and any(s for s in lyrics):
             request["lyrics"] = list(lyrics)
+        if phonemes:
+            request["phonemes"] = phonemes
         req_path.write_text(json.dumps(request), encoding="utf-8")
 
         proc = subprocess.run(
