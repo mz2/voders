@@ -82,15 +82,34 @@ pack-corpus RUN_ID="donor_pool": setup
 unpack-corpus RUN_ID="donor_pool": setup
     uv run --extra cpu python evals/corpus_archive.py unpack --run-id {{RUN_ID}}
 
-# Stub for model training on the augmented corpus. Syncs the env (set GPU=1 to add the gpu extra for
-# the CI/GPU runner), decompresses the committed OGG archive in-place if the corpus isn't already
-# rendered, then trains — so training needs no re-generation. Wire in the real trainer where marked.
-train manifest="out/donor_pool/manifest.jsonl":
-    {{ if env_var_or_default("GPU", "0") == "1" { "uv sync --extra cpu --extra gpu" } else { "uv sync --extra cpu" } }}
-    @test -f {{manifest}} || uv run --no-sync python evals/corpus_archive.py unpack
-    @test -f {{manifest}} || { echo "no manifest at {{manifest}} and no archive to unpack" >&2; exit 1; }
-    @echo "[train stub] augmented corpus: $(wc -l < {{manifest}}) clip(s) in {{manifest}}"
-    @echo "[train stub] TODO: invoke the real trainer here (e.g. uv run --no-sync voders train ...)."
+# Train the SoulX Basic Pitch baseline and stream metrics and media to Weights & Biases.
+train:
+    python3 -m training.train \
+        --train-dataset Synthetic \
+        --train-path syntheticdataset_soulx \
+        --val-dataset Klangio \
+        --sequence-length 8 \
+        --batch-size 32 \
+        --num-workers 8 \
+        --prefetch-factor 4 \
+        --frame-weight 9.0 \
+        --onset-weight 18.0 \
+        --learning-rate 1e-4 \
+        --max-epochs 30 \
+        --patience 30 \
+        --eval-metric COnPOff_f1 \
+        --precision bf16 \
+        --torch-compile \
+        --torch-compile-mode reduce-overhead \
+        --media-log-interval-steps 50 \
+        --output-dir BASIC_PITCH_CHALLENGE \
+        --experiment-name soulx_baseline \
+        --logger wandb \
+        --wandb-entity krishnakalyan \
+        --wandb-project MMLHackathon \
+        --wandb-mode online \
+        --wandb-name soulx-30epoch-compiled-bf16 \
+        --wandb-tags baseline soulx huggingface bf16 media
 
 # Run the full test suite.
 test: setup
