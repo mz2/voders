@@ -55,6 +55,11 @@ def default_profiles():
             steps=["reverb_ir", "codec"],
             params={"reverb_decay_s": 0.12, "reverb_wet": 0.20, "bitrate_kbps": 96.0},
         ),
+        AugmentationProfileConfig(
+            profile_id="gain_room",
+            steps=["gain", "reverb_ir"],
+            params={"gain_db": [-12.0, 3.0], "reverb_decay_s": 0.15, "reverb_wet": 0.2},
+        ),
     ]
 
 
@@ -83,6 +88,8 @@ class DynamicAugmentor:
         validate: bool = True,
         f0_method: str = "crepe_f0",
         f0_device: str = "auto",
+        pitch_shift_semitones: float = 0.0,
+        time_stretch_amount: float = 0.0,
         max_retries: int = 4,
         augment_prob: float = 1.0,
         seed: int = 0,
@@ -96,6 +103,13 @@ class DynamicAugmentor:
         self.profile_ids = self.chain.profile_ids()
         if not self.profile_ids:
             raise ValueError("DynamicAugmentor requires at least one augmentation profile")
+        # Label-transforming augmentations (change the score, not just the audio):
+        #   pitch_shift_semitones: max |semitones|; each sample draws an integer in [-p, p].
+        #   time_stretch_amount:   rate drawn from [1-a, 1+a] (a>0 enables it).
+        # When either fires, augment_chunk returns a transform the dataset applies to the
+        # labels (pitch += semitones; note times /= rate) so audio and labels stay in lockstep.
+        self.pitch_shift_semitones = float(pitch_shift_semitones)
+        self.time_stretch_amount = float(time_stretch_amount)
         self.max_retries = max(1, int(max_retries))
         self.augment_prob = float(augment_prob)
         self.base_seed = int(seed)
@@ -150,6 +164,33 @@ class DynamicAugmentor:
             )
         return self._validator
 
+    def _apply_pitch_time(self, audio: np.ndarray, semitones: int, rate: float) -> np.ndarray:
+        """Pitch-shift (semitones) and time-stretch (rate) a 1-D waveform, kept at input length."""
+        import librosa
+
+        y = audio
+        if semitones != 0:
+            y = librosa.effects.pitch_shift(y, sr=self.sr, n_steps=float(semitones))
+        if rate != 1.0:
+            y = librosa.effects.time_stretch(y, rate=float(rate))
+        n = audio.shape[0]
+        y = y[:n] if y.shape[0] >= n else np.pad(y, (0, n - y.shape[0]))
+        return np.ascontiguousarray(y, dtype=np.float32)
+
+    @staticmethod
+    def transform_notes(notes: np.ndarray, transform: dict) -> np.ndarray:
+        """Apply a label transform to (onset_s, offset_s, pitch) rows: time /= rate, pitch += n."""
+        if notes is None or len(notes) == 0:
+            return notes
+        out = np.array(notes, dtype=np.float64, copy=True)
+        rate = float(transform.get("time_rate", 1.0))
+        semitones = int(transform.get("semitones", 0))
+        if rate != 1.0:
+            out[:, 0] /= rate
+            out[:, 1] /= rate
+        out[:, 2] += semitones
+        return out
+
     def _build_score(self, notes: np.ndarray):
         """Build a voders Score from chunk-relative (onset_s, offset_s, pitch_midi) rows."""
         from voders.scores.models import Note, Score
@@ -161,35 +202,58 @@ class DynamicAugmentor:
                 out.append(Note(onset_s=onset_s, offset_s=offset_s, pitch_midi=pitch))
         return Score(score_id="train_chunk", notes=out)
 
-    def augment_chunk(self, audio: np.ndarray, notes: np.ndarray) -> np.ndarray:
-        """Return an augmented copy of ``audio`` (1-D float32) for the given chunk notes.
+    def augment_chunk(self, audio: np.ndarray, notes: np.ndarray):
+        """Return ``(augmented_audio, transform)`` for a 1-D float32 chunk.
 
-        ``notes`` is an (N, 3) array of chunk-relative ``(onset_s, offset_s, pitch_midi)``
-        rows used only when validation is enabled. Falls back to the input audio if no
-        proposal validates within the retry budget.
+        ``notes`` is an (N, 3) array of chunk-relative ``(onset_s, offset_s, pitch_midi)`` rows,
+        used to validate each proposal. ``transform`` is ``None`` for audio-only (label-safe)
+        augmentation, or ``{"semitones", "time_rate"}`` when a label-transforming pitch/time
+        augmentation fired — the caller must apply it to the labels. Falls back to the clean
+        audio (and ``None`` transform) if no proposal validates within the retry budget.
         """
         from voders.manifest.models import VerdictStatus
 
         rng = self._ensure_rng()
         audio = np.ascontiguousarray(audio, dtype=np.float32)
+        has_notes = notes is not None and len(notes) > 0
 
         if self.augment_prob < 1.0 and rng.random() >= self.augment_prob:
-            return audio
-
-        score = None
-        if self.validate and notes is not None and len(notes) > 0:
-            score = self._build_score(notes)
+            return audio, None
 
         for _ in range(self.max_retries):
+            # Label-transforming params (draw per proposal so rejection sampling explores them).
+            semitones = 0
+            if self.pitch_shift_semitones > 0:
+                p = int(self.pitch_shift_semitones)
+                semitones = int(rng.integers(-p, p + 1))
+            rate = 1.0
+            if self.time_stretch_amount > 0:
+                a = self.time_stretch_amount
+                rate = float(rng.uniform(1.0 - a, 1.0 + a))
+            transform = (
+                {"semitones": semitones, "time_rate": rate}
+                if (semitones != 0 or rate != 1.0)
+                else None
+            )
+
+            y = audio if transform is None else self._apply_pitch_time(audio, semitones, rate)
+
+            # Label-safe chain (gain/reverb/codec/mix) on top.
             profile_id = self.profile_ids[int(rng.integers(len(self.profile_ids)))]
             seed = int(rng.integers(0, 2**63 - 1))
-            augmented, snr_db = self.chain.apply(audio, profile_id, seed)
+            augmented, snr_db = self.chain.apply(y, profile_id, seed)
+            augmented = np.ascontiguousarray(augmented, dtype=np.float32)
 
-            if not self.validate or score is None or score.is_empty:
-                return np.ascontiguousarray(augmented, dtype=np.float32)
+            if not self.validate or not has_notes:
+                return augmented, transform
+
+            tnotes = self.transform_notes(notes, transform) if transform else notes
+            score = self._build_score(tnotes)
+            if score.is_empty:
+                return augmented, transform
 
             verdict = self._ensure_validator().validate(augmented, score, snr_db=snr_db)
             if verdict.status == VerdictStatus.ACCEPTED:
-                return np.ascontiguousarray(augmented, dtype=np.float32)
+                return augmented, transform
 
-        return audio  # no proposal passed validation -> clean fallback
+        return audio, None  # no proposal passed validation -> clean fallback

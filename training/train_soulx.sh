@@ -18,6 +18,9 @@ exec uv run --no-sync python -m training.train \
     --eval-metric COnPOff_f1 \
     --precision bf16 \
     --augment \
+    --no-augment-validate \
+    --augment-pitch-shift-semitones 2 \
+    --augment-time-stretch 0.08 \
     --media-log-interval-steps 50 \
     --output-dir BASIC_PITCH_CHALLENGE \
     --experiment-name soulx_baseline \

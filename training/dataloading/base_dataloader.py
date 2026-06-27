@@ -112,17 +112,22 @@ class PianoRollAudioDataset(Dataset):
                 pad_length = self.sequence_length - audio.shape[1]
                 audio = torch.nn.functional.pad(audio, (0, pad_length))
 
-            label = self._load_labels_chunk(
-                data["tsv_path"], chunk_start, audio.shape[1]
+            # Augment before building labels: a label-transforming (pitch/time) augmentation
+            # returns a rebuilt piano roll that replaces the score-derived one.
+            label_override = None
+            if self.augmentor is not None:
+                audio, label_override = self._augment(audio, data["tsv_path"], chunk_start)
+
+            label = (
+                label_override
+                if label_override is not None
+                else self._load_labels_chunk(data["tsv_path"], chunk_start, audio.shape[1])
             )
             expected_frames = (audio.shape[1] - 1) // HOP_LENGTH + 1
             if label.shape[0] < expected_frames:
                 label = torch.nn.functional.pad(
                     label, (0, 0, 0, expected_frames - label.shape[0])
                 )
-
-            if self.augmentor is not None:
-                audio = self._augment_audio(audio, data["tsv_path"], chunk_start)
 
             result["audio"] = audio.to(self.device)
             score_label = label.to(self.device)
@@ -136,7 +141,9 @@ class PianoRollAudioDataset(Dataset):
                 raise RuntimeError(f"Error loading labels for {data['path']}")
 
             if self.augmentor is not None:
-                audio = self._augment_audio(audio, data["tsv_path"], 0)
+                audio, label_override = self._augment(audio, data["tsv_path"], 0)
+                if label_override is not None:
+                    label = label_override
 
             result["audio"] = audio.to(self.device)
             result["notes"] = midi
@@ -150,11 +157,13 @@ class PianoRollAudioDataset(Dataset):
     def __len__(self):
         return len(self.chunk_indices)
 
-    def _chunk_notes(self, tsv_path, chunk_start, num_samples):
-        """(onset_s, offset_s, pitch) rows fully inside the chunk, rebased to chunk time.
+    def _chunk_notes(self, tsv_path, chunk_start, num_samples, contained_only=True):
+        """(onset_s, offset_s, pitch) rows for a chunk, rebased to chunk-relative time.
 
-        Only fully-contained notes are returned so the validator measures the augmentation's
-        effect on onsets/offsets, not chunk-boundary truncation.
+        ``contained_only`` (default) returns notes fully inside the chunk — used for validation,
+        so the validator measures the augmentation's effect, not chunk-boundary truncation.
+        Set it False to include every note overlapping the window (used to rebuild labels after
+        a label-transforming augmentation), where the piano-roll builder clips at the edges.
         """
         midi = self._load_tsv_cached(tsv_path)
         start_s = chunk_start / SAMPLE_RATE
@@ -162,16 +171,53 @@ class PianoRollAudioDataset(Dataset):
         rows = []
         for row in midi:
             onset_s, offset_s = float(row[0]), float(row[1])
-            if onset_s >= start_s and offset_s <= end_s:
+            inside = (
+                (onset_s >= start_s and offset_s <= end_s)
+                if contained_only
+                else (offset_s > start_s and onset_s < end_s)
+            )
+            if inside:
                 rows.append((onset_s - start_s, offset_s - start_s, float(row[2])))
         return np.asarray(rows, dtype=np.float64) if rows else np.zeros((0, 3), dtype=np.float64)
 
-    def _augment_audio(self, audio, tsv_path, chunk_start):
-        """Apply the dynamic augmentor to a [1, N] float32 waveform tensor (CPU)."""
+    def _labels_from_notes(self, notes, audio_length):
+        """Build a [n_steps, 127] piano roll from in-memory chunk-relative note rows."""
+        n_keys = 127
+        n_steps = (audio_length - 1) // HOP_LENGTH + 1
+        label = torch.zeros(n_steps, n_keys, dtype=torch.uint8)
+        chunk_duration_s = audio_length / SAMPLE_RATE
+        for onset, offset, note in notes:
+            if offset < 0 or onset >= chunk_duration_s:
+                continue
+            f = int(round(note))
+            if f < 0 or f >= n_keys:  # a pitch shift may push a note out of MIDI range
+                continue
+            left = int(round(onset * SAMPLE_RATE / HOP_LENGTH))
+            onset_right = min(n_steps, left + 1)
+            frame_left = max(0, onset_right)
+            frame_right = min(n_steps, int(round(offset * SAMPLE_RATE / HOP_LENGTH)))
+            if left >= 0:
+                label[left:onset_right, f] = ONSET_LABEL
+            label[frame_left:frame_right, f] = ACTIVE_FRAME_LABEL
+        return label
+
+    def _augment(self, audio, tsv_path, chunk_start):
+        """Augment a [1, N] waveform tensor; return (audio, label_override_or_None).
+
+        ``label_override`` is a rebuilt piano roll when a label-transforming (pitch/time)
+        augmentation fired, else None (the caller keeps the score-derived labels).
+        """
         audio_np = audio.squeeze(0).cpu().numpy()
-        notes = self._chunk_notes(tsv_path, chunk_start, audio_np.shape[0])
-        augmented = self.augmentor.augment_chunk(audio_np, notes)
-        return torch.from_numpy(np.ascontiguousarray(augmented, dtype=np.float32)).unsqueeze(0)
+        num = audio_np.shape[0]
+        contained = self._chunk_notes(tsv_path, chunk_start, num, contained_only=True)
+        aug_np, transform = self.augmentor.augment_chunk(audio_np, contained)
+        audio_t = torch.from_numpy(np.ascontiguousarray(aug_np, dtype=np.float32)).unsqueeze(0)
+        label_override = None
+        if transform is not None:
+            all_notes = self._chunk_notes(tsv_path, chunk_start, num, contained_only=False)
+            tnotes = self.augmentor.transform_notes(all_notes, transform)
+            label_override = self._labels_from_notes(tnotes, num)
+        return audio_t, label_override
 
     @classmethod
     @abstractmethod

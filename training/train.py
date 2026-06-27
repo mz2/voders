@@ -271,6 +271,24 @@ def main():
         default=1.0,
         help="Probability a given sample is augmented (1.0 = always)",
     )
+    augment_group.add_argument(
+        "--augment-pitch-shift-semitones",
+        type=float,
+        default=0.0,
+        help=(
+            "Max |semitones| for label-transforming pitch shift (0 = off); each sample draws an "
+            "integer in [-n, n] and the labels are transposed to match"
+        ),
+    )
+    augment_group.add_argument(
+        "--augment-time-stretch",
+        type=float,
+        default=0.0,
+        help=(
+            "Label-transforming time-stretch amount (0 = off); rate drawn from [1-a, 1+a] and the "
+            "label note times are scaled to match"
+        ),
+    )
 
     train_group = parser.add_argument_group("Training Configuration")
     train_group.add_argument(
@@ -511,6 +529,8 @@ def main():
             validate=args.augment_validate,
             f0_method=args.augment_f0_method,
             f0_device=args.augment_f0_device,
+            pitch_shift_semitones=args.augment_pitch_shift_semitones,
+            time_stretch_amount=args.augment_time_stretch,
             max_retries=args.augment_max_retries,
             augment_prob=args.augment_prob,
             seed=args.seed,

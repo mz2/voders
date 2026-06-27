@@ -120,6 +120,26 @@ def _step_codec(
     return filtered.astype(np.float32), accomp
 
 
+def _step_gain(
+    vocal: np.ndarray,
+    accomp: np.ndarray | None,
+    rng: np.random.Generator,
+    params: dict[str, object],
+    sr: int,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Scale the vocal amplitude by a random gain in dB. Label-safe: amplitude only — onsets,
+    offsets and pitch are untouched. ``params["gain_db"]`` is a ``[lo, hi]`` range (sampled per
+    call) or a scalar. The chain's final peak guard keeps the result below full scale.
+    """
+    gain_param = params.get("gain_db", [-12.0, 3.0])
+    if isinstance(gain_param, list | tuple) and len(gain_param) >= 2:
+        gain_db = float(rng.uniform(float(gain_param[0]), float(gain_param[1])))
+    else:
+        gain_db = _as_float(gain_param, 0.0)
+    factor = float(10.0 ** (gain_db / 20.0))
+    return (vocal.astype(np.float64) * factor).astype(np.float32), accomp
+
+
 def _synth_accompaniment(n: int, rng: np.random.Generator, sr: int = SAMPLE_RATE) -> np.ndarray:
     """A seeded synthetic accompaniment stem: lowpass-filtered noise (a simple pad).
 
@@ -167,6 +187,7 @@ _STEPS: dict[str, StepFn] = {
     "reverb_ir": _step_reverb_ir,
     "codec": _step_codec,
     "accompaniment_mix": _step_accompaniment_mix,
+    "gain": _step_gain,
 }
 
 
