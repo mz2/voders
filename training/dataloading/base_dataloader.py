@@ -36,6 +36,7 @@ class PianoRollAudioDataset(Dataset):
         device="cpu",
         num_workers=4,
         use_chunks_only_with_onsets=True,
+        augmentor=None,
     ):
         self.path = Path(path)
         self.groups = groups if groups is not None else self.available_groups()
@@ -44,6 +45,12 @@ class PianoRollAudioDataset(Dataset):
         self.random = np.random.RandomState(seed)
         self.num_workers = num_workers
         self.use_chunks_only_with_onsets = use_chunks_only_with_onsets
+        # Optional train-time dynamic augmentor (DynamicAugmentor). When set, __getitem__
+        # augments the loaded audio in place; labels are derived from the score and are
+        # unchanged. Validation (if enabled) runs torchcrepe on the GPU, so a dataset with
+        # an augmentor MUST be loaded with num_workers=0 (augmentation runs in the main
+        # process) to avoid the fork-after-CUDA deadlock.
+        self.augmentor = augmentor
 
         self.data = []
         self.chunk_indices = []
@@ -114,6 +121,9 @@ class PianoRollAudioDataset(Dataset):
                     label, (0, 0, 0, expected_frames - label.shape[0])
                 )
 
+            if self.augmentor is not None:
+                audio = self._augment_audio(audio, data["tsv_path"], chunk_start)
+
             result["audio"] = audio.to(self.device)
             score_label = label.to(self.device)
         else:
@@ -124,6 +134,9 @@ class PianoRollAudioDataset(Dataset):
             label, midi = self._load_labels(data["tsv_path"], full_audio_length)
             if label is None:
                 raise RuntimeError(f"Error loading labels for {data['path']}")
+
+            if self.augmentor is not None:
+                audio = self._augment_audio(audio, data["tsv_path"], 0)
 
             result["audio"] = audio.to(self.device)
             result["notes"] = midi
@@ -136,6 +149,29 @@ class PianoRollAudioDataset(Dataset):
 
     def __len__(self):
         return len(self.chunk_indices)
+
+    def _chunk_notes(self, tsv_path, chunk_start, num_samples):
+        """(onset_s, offset_s, pitch) rows fully inside the chunk, rebased to chunk time.
+
+        Only fully-contained notes are returned so the validator measures the augmentation's
+        effect on onsets/offsets, not chunk-boundary truncation.
+        """
+        midi = self._load_tsv_cached(tsv_path)
+        start_s = chunk_start / SAMPLE_RATE
+        end_s = (chunk_start + num_samples) / SAMPLE_RATE
+        rows = []
+        for row in midi:
+            onset_s, offset_s = float(row[0]), float(row[1])
+            if onset_s >= start_s and offset_s <= end_s:
+                rows.append((onset_s - start_s, offset_s - start_s, float(row[2])))
+        return np.asarray(rows, dtype=np.float64) if rows else np.zeros((0, 3), dtype=np.float64)
+
+    def _augment_audio(self, audio, tsv_path, chunk_start):
+        """Apply the dynamic augmentor to a [1, N] float32 waveform tensor (CPU)."""
+        audio_np = audio.squeeze(0).cpu().numpy()
+        notes = self._chunk_notes(tsv_path, chunk_start, audio_np.shape[0])
+        augmented = self.augmentor.augment_chunk(audio_np, notes)
+        return torch.from_numpy(np.ascontiguousarray(augmented, dtype=np.float32)).unsqueeze(0)
 
     @classmethod
     @abstractmethod
