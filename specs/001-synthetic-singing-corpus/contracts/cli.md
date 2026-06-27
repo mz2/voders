@@ -54,3 +54,18 @@ voders stats --manifest <out>/manifest.jsonl [--out stats.json]
 
 - Reports total samples, unique scores/voices, timbre identities (SC-004), pitch & duration
   distributions, augmentation coverage (SC-006), accept/reject counts.
+
+## `splits`
+
+Write source-stratified train/validation splits over accepted samples (issue #7), so a downstream
+training run can attribute errors to specific generators.
+
+```
+voders splits --manifest <out>/manifest.jsonl [--val-fraction 0.2] [--seed 0] \
+              [--stratify lane,voice_id,augmentation_profile] [--out splits.json]
+```
+
+- Holds out `--val-fraction` *within each source group* (lane/voice/augmentation profile), so train
+  and val both carry a proportional slice of every source. Deterministic in `--seed`. Writes
+  `splits.json` (train/val entry lists with `sample_id`/`audio_path`/`score_path`/`source`, plus
+  per-source counts).

@@ -222,7 +222,12 @@ __marimo__/
 /out/
 
 # voders: downloaded model weights are never committed (large, consent-gated assets).
-/models/
+# Exception: the small CC0/permissive Freesound donor vowels are versioned via LFS so the
+# data-augmentation pipeline has reproducible source material (see ATTRIBUTION.txt).
+/models/*
+!/models/donors/
+/models/donors/*
+!/models/donors/freesound/
 
 # Cloned third-party backend repos (fetched at runtime, not part of this repo).
 /backends/*/seed-vc/

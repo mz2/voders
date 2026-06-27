@@ -1,0 +1,28 @@
+# Deterministic lane with the Vocos neural-vocoder enhancement (alignment-safe).
+# Requires the gpu extra (torch + vocos). Run: `just demo-vocos`.
+run_id: vocos
+master_seed: 20260627
+
+scores: evals/fixtures/scores/score_00[0-1].tsv
+output_root: out/vocos
+
+voices:
+  - voice_id: donor_ah_synth
+    kind: deterministic_donor
+    license: "CC0 synthetic vowel"
+    consent_verified: true
+    model_ref: evals/fixtures/voices/donor_ah_synth.wav
+
+lanes:
+  deterministic:
+    enabled: true
+    synth: world
+    vocoder: vocos   # neural re-vocoding (world = default WORLD output)
+
+validator:
+  onset_ms: 50
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0

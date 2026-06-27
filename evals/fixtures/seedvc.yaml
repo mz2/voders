@@ -19,6 +19,7 @@ lanes:
     enabled: true
     backend: seedvc
     base_donor: evals/fixtures/voices/donor_ah_synth.wav  # WORLD source render; Seed-VC re-timbres
+    diffusion_steps: 50  # more steps -> cleaner conversion (default 25)
 
 validator:
   onset_ms: 50

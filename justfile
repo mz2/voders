@@ -53,10 +53,40 @@ audit manifest=manifest: setup
 stats manifest=manifest: setup
     uv run voders stats --manifest {{manifest}}
 
+# Source-stratified train/val splits (issue #7): hold out per lane/voice/aug profile.
+splits manifest=manifest: setup
+    uv run voders splits --manifest {{manifest}}
+
 # Render the smoke fixtures then evaluate them end-to-end.
 smoke: fixtures
     uv run voders run --config {{config}}
     uv run voders eval --manifest {{manifest}}
+
+# Regenerate the unified donor-pool config from every donor on disk (all data-source methods).
+build-pool: setup
+    uv run --extra cpu python evals/build_donor_pool.py
+
+# Whole data-augmentation pipeline (what the data-augmentation Action runs). Enrolls donors from
+# EVERY source method (synthetic fixtures + VocalSet/VCTK + Freesound; mic recordings join if
+# present), unifies them into one pool, renders the deterministic lane, fans each accepted render
+# through the augmentation profiles, then audits + evaluates + aggregates. FETCH=0 skips the network
+# fetches and runs purely on the checked-in donors (this is what the CI action uses).
+augment FETCH="1" FREESOUND_COUNT="5" pool="evals/fixtures/donor_pool.yaml" manifest="out/donor_pool/manifest.jsonl": fixtures
+    {{ if FETCH == "1" { "-uv run --extra cpu --extra donors python evals/download_donors.py" } else { "echo 'FETCH=0: using checked-in donors (no dataset download)'" } }}
+    {{ if FETCH == "1" { "-uv run --extra cpu python evals/download_freesound.py --count " + FREESOUND_COUNT + " --license cc0" } else { "echo 'FETCH=0: using checked-in Freesound donors (no download)'" } }}
+    rm -rf out/donor_pool
+    uv run --extra cpu python evals/build_donor_pool.py --out {{pool}}
+    @just list-donors
+    uv run voders run --config {{pool}}
+    uv run voders audit --manifest {{manifest}}
+    uv run voders eval --manifest {{manifest}}
+    uv run voders stats --manifest {{manifest}}
+
+# Stub for model training on the augmented corpus. Wire in the real trainer where marked.
+train manifest="out/donor_pool/manifest.jsonl": setup
+    @test -f {{manifest}} || { echo "no manifest at {{manifest}} — run 'just augment' first" >&2; exit 1; }
+    @echo "[train stub] augmented corpus: $(wc -l < {{manifest}}) clip(s) in {{manifest}}"
+    @echo "[train stub] TODO: invoke the real training entrypoint here (e.g. uv run voders train ...)."
 
 # Run the full test suite.
 test: setup
@@ -97,6 +127,27 @@ download-donors:
     uv sync --extra cpu --extra donors
     uv run --extra cpu --extra donors python evals/download_donors.py
 
+# Fetch CC0/CC-BY donor vowels from Freesound (needs FREESOUND_API_TOKEN). QUERY=/COUNT=/LICENSE= optional.
+download-freesound QUERY="sung vowel" COUNT="3" LICENSE="cc0": setup
+    uv run --extra cpu python evals/download_freesound.py \
+        --query {{quote(QUERY)}} --count {{COUNT}} --license {{LICENSE}}
+
+# Show the donor voices fetched/enrolled under models/donors/ (counts, sizes, licenses).
+list-donors:
+    @echo "== donor voices under models/donors/ (git-ignored) =="
+    @find models/donors -name '*.wav' 2>/dev/null | sort | sed 's|models/donors/|  |' || true
+    @echo "  ($(find models/donors -name '*.wav' 2>/dev/null | wc -l | tr -d ' ') WAV(s), $(du -sh models/donors 2>/dev/null | cut -f1 || echo 0) on disk)"
+    @if [ -f models/donors/freesound/ATTRIBUTION.txt ]; then \
+        echo ""; echo "== Freesound attribution / licenses =="; \
+        column -t -s$'\t' models/donors/freesound/ATTRIBUTION.txt; \
+    fi
+
+# Enroll your own consented donor vowel. Import a WAV (FILE=...) or record from the mic (RECORD=1).
+record-donor VOICE_ID FILE="" RECORD="": setup
+    uv run --extra cpu {{ if RECORD != "" { "--extra record" } else { "" } }} \
+        python evals/record_donor.py --voice-id {{VOICE_ID}} \
+        {{ if RECORD != "" { "--record" } else { "--input " + FILE } }}
+
 # Render the deterministic lane with a real VocalSet donor voice, then evaluate.
 demo-real-donor: download-donors
     uv run voders run --config evals/fixtures/real_donor.yaml
@@ -115,6 +166,22 @@ setup-seedvc-backend:
 demo-seedvc: setup setup-seedvc-backend download-donors
     uv run voders run --config evals/fixtures/seedvc.yaml
     uv run voders eval --manifest out/seedvc/manifest.jsonl
+
+# EXPERIMENTAL: deterministic lane re-vocoded through Vocos (needs the gpu extra).
+# Note: mel Vocos is not f0-conditioned, so the alignment gate currently rejects its output —
+# see src/voders/render/vocos_enhance.py. Kept as a runnable experiment, not a default.
+demo-vocos: setup-gpu
+    uv run --extra cpu --extra gpu voders run --config evals/fixtures/vocos.yaml
+    uv run --extra cpu --extra gpu voders eval --manifest out/vocos/manifest.jsonl
+
+# Sync the consumer-side Basic Pitch eval backend (its own uv project, Python 3.11).
+setup-basicpitch-backend:
+    uv sync --project backends/basicpitch
+
+# Consumer-side eval: run Basic Pitch on a produced corpus, report note-F1 per source
+# (does the drift actually matter to the downstream transcriber?). Override: `just basic-pitch-eval manifest=out/<run>/manifest.jsonl`.
+basic-pitch-eval manifest=manifest: setup-basicpitch-backend
+    uv run --project backends/basicpitch python -m voders_basicpitch_backend.worker {{manifest}}
 
 # Render + validate with the CREPE neural f0 estimator on the GPU (needs the `gpu` extra).
 smoke-gpu: setup-gpu

@@ -149,6 +149,22 @@ Both are fetched per-sample (streamed, not bundled), recorded with their license
 - **Expressive SVS** — **DiffSinger** / **TCSinger** (stronger than NNSVS) remain lyric-driven and
   re-generate timing, so they stay behind the force-score-f0 / re-derive safety net (Decision 3).
 
+## Decision 9 — Validator f0 tolerance, calibrated against the downstream consumer
+
+The validator gates f0 at ±25 cents over ≥80% of each note. That is stricter than the consumer
+(Basic Pitch scores pitch on a semitone grid with a ±50-cent / quarter-tone note tolerance), which
+raised the question of whether we over-reject. We measured it: the consumer-side eval
+(`just basic-pitch-eval`, `backends/basicpitch`) runs Basic Pitch on each rendered sample and scores
+note-F1 (mir_eval COnP: onset 50 ms, pitch 50 cents) vs the labels.
+
+Result (per lane): NNSVS 1.00, deterministic/synthetic 0.94, deterministic/VocalSet 0.87, RVC 0.80
+— all **accepted**; Seed-VC 0.57 and Vocos 0.48 — both **rejected**. So the ±25-cent gate is a real
+quality discriminator (accepted ≈0.8–1.0 vs rejected ≈0.5), not needless strictness, and the
+rejected samples' drift genuinely lowers consumer F1. **Decision: keep `f0_cents = 25`.** Loosening
+toward ±50 would admit exactly the lowest-F1 (~0.5) samples (Vocos's bad notes sit at ≈−20 cents, so
+any threshold ≥~30 lets them in). Non-accepted samples remain retained under `rejected/` (still ≈0.5
+F1, 3× the 0.15 floor) and are available if an operator deliberately trades quality for quantity.
+
 ## Resolved unknowns
 
 | Deferred item (from spec) | Resolution |
