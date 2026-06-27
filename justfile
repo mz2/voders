@@ -96,11 +96,19 @@ augment-accomp BACKEND="fake" FETCH="1" FREESOUND_COUNT="5" VOCALSET_SINGERS="18
     uv run --extra cpu --extra accomp voders eval --manifest {{manifest}}
     uv run --extra cpu --extra accomp voders stats --manifest {{manifest}}
 
-# Stub for model training on the augmented corpus. Wire in the real trainer where marked.
-train manifest="out/donor_pool/manifest.jsonl": setup
-    @test -f {{manifest}} || { echo "no manifest at {{manifest}} — run 'just augment' first" >&2; exit 1; }
-    @echo "[train stub] augmented corpus: $(wc -l < {{manifest}}) clip(s) in {{manifest}}"
-    @echo "[train stub] TODO: invoke the real training entrypoint here (e.g. uv run voders train ...)."
+# Pack the rendered corpus into a committable OGG archive (~17x smaller, LFS) under datasets/<run_id>/.
+pack-corpus RUN_ID="donor_pool": setup
+    uv run --extra cpu python evals/corpus_archive.py pack --run-id {{RUN_ID}}
+
+# Decompress the committed OGG archive back to WAV at out/<run_id>/corpus/ for the training task.
+unpack-corpus RUN_ID="donor_pool": setup
+    uv run --extra cpu python evals/corpus_archive.py unpack --run-id {{RUN_ID}}
+
+# Train the SoulX Basic Pitch baseline and stream metrics and media to Weights & Biases.
+train manifest="out/donor_pool/manifest.jsonl":
+    uv sync --extra cpu --extra gpu --extra training
+    @test -f {{manifest}} || uv run --no-sync python evals/corpus_archive.py unpack
+    bash training/train_soulx.sh
 
 # Run the full test suite.
 test: setup

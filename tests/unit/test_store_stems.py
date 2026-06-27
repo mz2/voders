@@ -57,7 +57,9 @@ def test_writes_mix_and_stem_alongside(tmp_path: Path) -> None:
     stem_path = audio_path.with_suffix(".stem.wav")
     assert audio_path.exists()
     assert stem_path.exists()
-    assert stem_path.name == "score_000_acc_lego.stem.wav"
+    # Per-sample dir layout (<sample_id>/audio.wav): the stem is audio.stem.wav alongside the mix.
+    assert stem_path.name == "audio.stem.wav"
+    assert stem_path.parent.name == written.sample_id
 
     stem_back, sr = read_wav(stem_path)
     assert sr == 22_050

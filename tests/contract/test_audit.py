@@ -25,8 +25,8 @@ def _record(
     return ProvenanceRecord(
         sample_id=sample_id,
         score_id="score_000",
-        score_path="corpus/shard=000/x.tsv" if accepted else "",
-        audio_path="corpus/shard=000/x.wav" if accepted else "",
+        score_path=f"corpus/shard=000/{sample_id}/score.tsv" if accepted else "",
+        audio_path=f"corpus/shard=000/{sample_id}/audio.wav" if accepted else "",
         lane="deterministic",
         voice_id=voice_id,
         seed=1,

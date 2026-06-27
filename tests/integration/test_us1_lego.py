@@ -55,11 +55,11 @@ def test_lego_preserves_vocal_and_keeps_stem(tmp_path: Path) -> None:
     assert prov.stem_available is True
     assert prov.source_vocal_sample_id == base.sample_id
 
-    # The separable Lego stem is written next to the mix under corpus/shard=000/.
+    # The separable Lego stem sits next to the mix in the sample's dir: shard=000/<sample_id>/.
     shard = out_root / "corpus" / "shard=000"
-    stem_path = shard / f"{rec.sample_id}.stem.wav"
+    stem_path = shard / rec.sample_id / "audio.stem.wav"
     assert stem_path.exists()
 
     # SC-001 spirit: the retained source vocal is the base render's wav, which must exist.
-    base_wav = shard / f"{base.sample_id}.wav"
+    base_wav = shard / base.sample_id / "audio.wav"
     assert base_wav.exists()
