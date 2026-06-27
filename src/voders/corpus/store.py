@@ -3,9 +3,9 @@
 Layout under the output root::
 
     config.resolved.yaml   manifest.jsonl   stats.json
-    corpus/shard=NNN/      score_*.wav + byte-identical score_*.tsv   (accepted)
-    rejected/shard=NNN/    non-accepted samples (audio + reason)       (never trained on)
-    checkpoints/           streaming resume state (git-ignored scratch)
+    corpus/shard=NNN/<sample_id>/      audio.wav + byte-identical score.tsv  (accepted)
+    rejected/shard=NNN/<sample_id>/    non-accepted samples (audio + reason) (never trained on)
+    checkpoints/                       streaming resume state (git-ignored scratch)
 
 Accepted samples (and only those) land in ``corpus/``; every non-accepted status retains both its
 provenance and its audio under ``rejected/`` (FR-006a).
@@ -46,14 +46,20 @@ class CorpusStore:
         return d
 
     def paths_for(self, record: ProvenanceRecord, index: int) -> tuple[Path, Path]:
-        """Return (audio_path, score_path) for a sample given its accept/reject status."""
+        """Return (audio_path, score_path) for a sample given its accept/reject status.
+
+        Each sample gets its own directory ``shard=NNN/<sample_id>/`` with ``audio.wav`` and
+        ``score.tsv`` — a flat per-sample layout downstream loaders can iterate as one dir per item.
+        """
         base = (
             self.corpus_dir
             if record.verdict.status == VerdictStatus.ACCEPTED
             else self.rejected_dir
         )
         shard = self._shard_dir(base, index)
-        return shard / f"{record.sample_id}.wav", shard / f"{record.sample_id}.tsv"
+        sample_dir = shard / record.sample_id
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        return sample_dir / "audio.wav", sample_dir / "score.tsv"
 
     def write_sample(
         self,

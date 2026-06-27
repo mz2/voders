@@ -12,8 +12,8 @@ def _record(sample_id: str, status: VerdictStatus = VerdictStatus.ACCEPTED) -> P
     return ProvenanceRecord(
         sample_id=sample_id,
         score_id="score_000",
-        score_path=f"corpus/shard=000/{sample_id}.tsv",
-        audio_path=f"corpus/shard=000/{sample_id}.wav",
+        score_path=f"corpus/shard=000/{sample_id}/score.tsv",
+        audio_path=f"corpus/shard=000/{sample_id}/audio.wav",
         lane="deterministic",
         voice_id="donor_ah",
         seed=12345,

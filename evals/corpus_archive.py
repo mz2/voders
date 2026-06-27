@@ -2,10 +2,11 @@
 
 Rendering the augmented corpus takes a while, so the accepted audio is archived under
 ``datasets/<run_id>/`` as **OGG/Vorbis** (~17× smaller than 22,050 Hz mono float32 WAV) and
-versioned via Git LFS. The labels (``*.tsv``), ``manifest.jsonl``, ``stats.json``, and
-``config.resolved.yaml`` are copied verbatim. ``unpack`` decompresses the OGG back to WAV at the
-exact paths the renderer would have written (``out/<run_id>/corpus/.../*.wav``), so the training
-task consumes the manifest unchanged.
+versioned via Git LFS. Both archive and working tree use one directory per sample —
+``corpus/shard=NNN/<sample_id>/`` containing ``audio.{wav,ogg}`` plus ``score.tsv``. The labels,
+``manifest.jsonl``, ``stats.json``, and ``config.resolved.yaml`` are copied verbatim. ``unpack``
+decompresses each ``audio.ogg`` back to ``audio.wav`` at the same per-sample path the renderer
+would have written, so the training task consumes the manifest unchanged.
 
     uv run --extra cpu python evals/corpus_archive.py pack     # out/<id> -> datasets/<id>
     uv run --extra cpu python evals/corpus_archive.py unpack   # datasets/<id> -> out/<id>
@@ -39,19 +40,17 @@ def pack(run_dir: Path, archive: Path) -> int:
         return 1
     arc_corpus = archive / "corpus"
     n_audio = n_label = 0
-    for wav in sorted(corpus.rglob("*.wav")):
-        rel = wav.relative_to(corpus)
-        dest = arc_corpus / rel.with_suffix(".ogg")
-        dest.parent.mkdir(parents=True, exist_ok=True)
+    for wav in sorted(corpus.rglob("audio.wav")):
+        rel_dir = wav.parent.relative_to(corpus)
+        dest_dir = arc_corpus / rel_dir
+        dest_dir.mkdir(parents=True, exist_ok=True)
         audio, sr = sf.read(wav, dtype="float32")
-        sf.write(dest, audio, sr, format="OGG", subtype="VORBIS")
+        sf.write(dest_dir / "audio.ogg", audio, sr, format="OGG", subtype="VORBIS")
         n_audio += 1
-    for tsv in sorted(corpus.rglob("*.tsv")):
-        rel = tsv.relative_to(corpus)
-        dest = arc_corpus / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(tsv, dest)
-        n_label += 1
+        tsv = wav.parent / "score.tsv"
+        if tsv.exists():
+            shutil.copy2(tsv, dest_dir / "score.tsv")
+            n_label += 1
     for name in META_FILES:
         src = run_dir / name
         if src.exists():
@@ -68,19 +67,17 @@ def unpack(archive: Path, run_dir: Path) -> int:
         return 1
     corpus = run_dir / "corpus"
     n_audio = n_label = 0
-    for ogg in sorted(arc_corpus.rglob("*.ogg")):
-        rel = ogg.relative_to(arc_corpus)
-        dest = corpus / rel.with_suffix(".wav")
-        dest.parent.mkdir(parents=True, exist_ok=True)
+    for ogg in sorted(arc_corpus.rglob("audio.ogg")):
+        rel_dir = ogg.parent.relative_to(arc_corpus)
+        dest_dir = corpus / rel_dir
+        dest_dir.mkdir(parents=True, exist_ok=True)
         audio, sr = sf.read(ogg, dtype="float32")
-        sf.write(dest, audio, sr, subtype="FLOAT")
+        sf.write(dest_dir / "audio.wav", audio, sr, subtype="FLOAT")
         n_audio += 1
-    for tsv in sorted(arc_corpus.rglob("*.tsv")):
-        rel = tsv.relative_to(arc_corpus)
-        dest = corpus / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(tsv, dest)
-        n_label += 1
+        tsv = ogg.parent / "score.tsv"
+        if tsv.exists():
+            shutil.copy2(tsv, dest_dir / "score.tsv")
+            n_label += 1
     for name in META_FILES:
         src = archive / name
         if src.exists():
