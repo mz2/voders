@@ -16,7 +16,7 @@ except ImportError:
     HAS_CV2 = False
     cv2 = None
 
-from ..constants import FRAME_DURATION_S, MIN_NOTE_LEN_FRAMES
+from ..constants import ENERGY_TOL_FRAMES, FRAME_DURATION_S, MIN_NOTE_LEN_FRAMES
 
 def weighted_mode(values: np.ndarray, weights: np.ndarray) -> int:
     """Return the value with the highest total weight."""
@@ -102,7 +102,7 @@ def output_to_notes_polyphonic(
     max_freq: float = librosa.note_to_hz("G9"),
     min_freq: float = librosa.note_to_hz("C1"),
     melodia_trick: bool = False,
-    energy_tol: int = 11,
+    energy_tol: int = ENERGY_TOL_FRAMES,
 ) -> np.array:
     """Decode raw model output to polyphonic note events
 
@@ -116,7 +116,9 @@ def output_to_notes_polyphonic(
         max_freq: Maximum allowed output frequency, in Hz.
         min_freq: Minimum allowed output frequency, in Hz.
         melodia_trick : Whether to use the melodia trick to better detect notes.
-        energy_tol: Drop notes below this energy.
+        energy_tol: Offset hangover in frames — how many consecutive sub-threshold frames are
+            tolerated inside a note before its offset is committed. Defaults to ENERGY_TOL_FRAMES
+            (~128 ms at this pipeline's frame rate).
 
     Returns:
         numpy array with the notes of shape [n_notes, (start_time_frames, end_time_frames, pitch_midi)]
