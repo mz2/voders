@@ -190,9 +190,11 @@ def main():
     data_group.add_argument(
         "--eval-metric",
         type=str,
-        default="COnP_f1",
+        default="COnPOff_f1",
         choices=list(METRICS_REGISTRY.keys()),
-        help="Metric to track to select the best checkpoint",
+        help="Metric to track to select the best checkpoint. Defaults to the offset-aware "
+        "COnPOff_f1; COnP_f1 ignores offsets (offset_ratio=None), so checkpoint and "
+        "early-stopping selection would be blind to note end-times.",
     )
 
     audio_group = parser.add_argument_group("Audio Processing")
