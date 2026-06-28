@@ -151,6 +151,13 @@ def stage(
     for spec in run_ids:
         rid, _, cap = spec.partition(":")  # "donor_pool:100" caps that dataset to 100 songs
         limit = int(cap) if cap else None
+        if "=" in rid:  # e.g. someone ran `just train RELABEL=1` (RELABEL=1 lands here as a run id)
+            print(
+                f"skip {rid!r}: looks like a variable assignment, not a dataset. To toggle "
+                "relabeling use `RELABEL=1 just train` or `just RELABEL=1 train`.",
+                file=sys.stderr,
+            )
+            continue
         arc_corpus = REPO / "datasets" / rid / "corpus"
         if not arc_corpus.is_dir():
             print(f"skip {rid}: no archive at {arc_corpus}", file=sys.stderr)
