@@ -128,9 +128,14 @@ klangio-fifth N SHARDS="6": setup
 # is kept as a cheap label/timbre anchor, alongside the full scat (lyrics_pool), real-word
 # (lyrics_pool_words), and any rendered Klangio fifths. Absent run ids are skipped, so the fifths
 # join automatically as each `just klangio-fifth N` completes. Use `donor_pool` (no cap) for all of it.
-train RUN_IDS="donor_pool:40 lyrics_pool lyrics_pool_words klangio_fifth_0 klangio_fifth_1 klangio_fifth_2 klangio_fifth_3 klangio_fifth_4":
+# Pass RELABEL=1 (`just train RELABEL=1`) to re-derive each sample's onset/offset labels from its
+# own audio during staging: the datasets are rendered force_score_f0 (labels on the rigid score grid)
+# but the SVS audio sings with its own micro-timing, so ~39% of offsets sit >50 ms off the real
+# voicing end. A re-derived label is kept only when it passes validation against the audio, else the
+# original score label is staged unchanged. Adds an f0 pass per sample, so staging is slower.
+train RUN_IDS="donor_pool:40 lyrics_pool lyrics_pool_words klangio_fifth_0 klangio_fifth_1 klangio_fifth_2 klangio_fifth_3 klangio_fifth_4" RELABEL="0":
     uv sync --extra cpu --extra gpu --extra training
-    uv run --extra cpu python evals/corpus_archive.py stage --clean --run-ids {{RUN_IDS}} --out syntheticdataset_soulx
+    uv run --extra cpu python evals/corpus_archive.py stage --clean --run-ids {{RUN_IDS}} --out syntheticdataset_soulx {{ if RELABEL == "1" { "--relabel-offsets" } else { "" } }}
     bash training/train_soulx.sh
 
 # Run the full test suite.

@@ -8,16 +8,16 @@ exactly the signal the model already predicts worst (offsets).
 
 This relabels each sample's onsets+offsets from its OWN audio using the production f0 alignment
 (``voders.validate.f0_align.align_score_to_f0`` — now fixed so each offset tracks the note's actual
-voicing end instead of snapping to the next onset), validates the re-derived label against the audio,
-and writes a NEW corpus dir. Audio is never re-synthesised; only the ``.tsv`` is rewritten.
+voicing end instead of snapping to the next onset), validates the re-derived label against the
+audio, and writes a NEW corpus dir. Audio is never re-synthesised; only the ``.tsv`` is rewritten.
 
 Layout (mirrors the staged training dirs)::
 
     <src>/<sample>/{audio.wav, score.tsv}  ->  <dst>/<sample>/{audio.wav (symlink), score.tsv}
 
 plus ``<dst>/relabel_manifest.jsonl`` (one row per sample: drift vs the old label + validation
-verdict) and a printed aggregate summary. Re-derivation is non-destructive: the source corpus is left
-untouched so you can A/B train old-vs-relabelled.
+verdict) and a printed aggregate summary. Re-derivation is non-destructive: the source corpus is
+left untouched so you can A/B train old-vs-relabelled.
 
 Note: f0 is measured twice per sample (once to align, once to validate), so a full 6.7k-sample pass
 is not cheap. Trial with ``--limit``/``--stride`` first.
@@ -32,11 +32,9 @@ from pathlib import Path
 import numpy as np
 
 from voders.audio import read_wav
-from voders.config.models import ValidatorConfig
 from voders.manifest.models import VerdictStatus
 from voders.scores.parse import parse_tsv, serialize_score
-from voders.validate.f0_align import align_score_to_f0
-from voders.validate.validator import Validator
+from voders.validate.f0_align import relabel_score
 
 
 def _pct(values: list[float], q: float) -> float:
@@ -45,7 +43,9 @@ def _pct(values: list[float], q: float) -> float:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--src", default="syntheticdataset_soulx", help="corpus dir of <sample>/ subdirs")
+    ap.add_argument(
+        "--src", default="syntheticdataset_soulx", help="corpus dir of <sample>/ subdirs"
+    )
     ap.add_argument("--dst", required=True, help="output corpus dir (created; must not be the src)")
     ap.add_argument("--stride", type=int, default=1, help="process every Nth sample (subset)")
     ap.add_argument("--limit", type=int, default=0, help="cap number of samples (0 = all)")
@@ -67,7 +67,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.limit:
         dirs = dirs[: args.limit]
 
-    validator = Validator(ValidatorConfig())
     manifest = (dst / "relabel_manifest.jsonl").open("w")
 
     n = written = accepted = 0
@@ -79,10 +78,9 @@ def main(argv: list[str] | None = None) -> int:
             continue
         audio, sr = read_wav(wav)
         score = parse_tsv(tsv).score
-        rederived, onset_dev_ms, offset_dev_ms = align_score_to_f0(
-            audio, score, sr=sr, device=args.device
+        rederived, verdict, onset_dev_ms, offset_dev_ms = relabel_score(
+            audio, sr, score, device=args.device
         )
-        verdict = validator.validate(audio, rederived, f0_device=args.device)
         is_accepted = verdict.status == VerdictStatus.ACCEPTED
 
         n += 1

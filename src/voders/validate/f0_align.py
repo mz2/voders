@@ -143,8 +143,9 @@ def align_score_to_f0(
                 offset = min(offset, next_onset)
         if offset <= onset:  # guard degenerate spans
             offset = onset + max(0.02, note.duration_s * 0.5)
-        rederived.append(Note(onset_s=round(onset, 3), offset_s=round(offset, 3),
-                              pitch_midi=note.pitch_midi))
+        rederived.append(
+            Note(onset_s=round(onset, 3), offset_s=round(offset, 3), pitch_midi=note.pitch_midi)
+        )
         max_dev_ms = max(max_dev_ms, abs(onset - note.onset_s) * 1000.0)
         max_offset_dev_ms = max(max_offset_dev_ms, abs(offset - note.offset_s) * 1000.0)
 
@@ -153,3 +154,30 @@ def align_score_to_f0(
         max_dev_ms,
         max_offset_dev_ms,
     )
+
+
+def relabel_score(
+    audio: np.ndarray,
+    sr: int,
+    score: Score,
+    *,
+    device: str = "auto",
+    validator=None,
+):
+    """Re-derive a score's onset/offset labels from its OWN audio and validate the result.
+
+    Returns ``(rederived_score, verdict, onset_drift_ms, offset_drift_ms)``. ``verdict`` is the
+    validator's check of the re-derived label against the audio; callers keep the re-derived label
+    only when ``verdict.status`` is ACCEPTED and otherwise fall back to the original (so a sample is
+    never lost or corrupted by a poor alignment). This is the shared core of the offline relabel CLI
+    and the staging-time relabel in ``just train``.
+    """
+    from voders.config.models import ValidatorConfig
+    from voders.validate.validator import Validator
+
+    rederived, onset_drift_ms, offset_drift_ms = align_score_to_f0(
+        audio, score, sr=sr, device=device
+    )
+    validator = validator or Validator(ValidatorConfig(), sr=sr)
+    verdict = validator.validate(audio, rederived, f0_device=device)
+    return rederived, verdict, onset_drift_ms, offset_drift_ms
