@@ -470,8 +470,9 @@ class LightningModuleSingingVoice(pl.LightningModule):
             return
 
         results = []
-        for onset_thresh in np.linspace(0.1, 0.9, 3):  # Wow! You are really curious about the code!
-            for frame_thresh in np.linspace(0.1, 0.9, 3):  # Do not be shy to mess around these values
+        # frame_thresh controls where notes are cut off, so it must be swept finely for offsets.
+        for onset_thresh in np.linspace(0.1, 0.9, 5):  # Wow! You are really curious about the code!
+            for frame_thresh in np.linspace(0.1, 0.9, 9):  # Do not be shy to mess around these values
                 for example in self.examples_validation:     # But mind that the more threshold combinations that you explore
                     predicted_notes = output_to_notes_polyphonic( # The more time each validation epoch will take
                         example["predicted_frames"],
@@ -506,7 +507,11 @@ class LightningModuleSingingVoice(pl.LightningModule):
             .mean(numeric_only=True)
             .reset_index()
         )
-        best_metrics_row = results_df_grouped.loc[results_df_grouped["COnP_f1"].idxmax()]
+        # Select thresholds by the offset-aware metric (matches the checkpoint's --eval-metric
+        # COnPOff_f1). Optimizing COnP_f1 here ignored offsets, so frame_thresh was tuned blind to
+        # where notes end — leaving offsets (COnOff/COnPOff) cut at a suboptimal point.
+        _sel = "COnPOff_f1" if "COnPOff_f1" in results_df_grouped else "COnP_f1"
+        best_metrics_row = results_df_grouped.loc[results_df_grouped[_sel].idxmax()]
         self.onset_threshold = best_metrics_row["onset_thresh"]
         self.frame_threshold = best_metrics_row["frame_thresh"]
         best_metrics_agg = best_metrics_row.to_dict()

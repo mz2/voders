@@ -172,7 +172,12 @@ class PianoRollAudioDataset(Dataset):
     def _load_tsv_cached(self, tsv_path):
         tsv_key = str(tsv_path)
         if tsv_key not in self._tsv_cache:
-            midi = np.loadtxt(tsv_path, delimiter="\t", skiprows=1)
+            # Klangio TSVs carry a "# onset,offset,note" header; the synthetic ones are headerless.
+            # Only skip an actual header — a blanket skiprows=1 silently drops the first note of
+            # every synthetic clip (and mislabels its audio as silence).
+            with open(tsv_path) as _fh:
+                _skip = 1 if _fh.readline().lstrip().startswith("#") else 0
+            midi = np.loadtxt(tsv_path, delimiter="\t", skiprows=_skip)
             if midi.ndim == 1:
                 midi = midi[np.newaxis, :]
             self._tsv_cache[tsv_key] = midi

@@ -10,7 +10,7 @@ exec uv run --no-sync python -m training.train \
     --batch-size 32 \
     --num-workers 8 \
     --prefetch-factor 4 \
-    --frame-weight 9.0 \
+    --frame-weight 2.0 \
     --onset-weight 18.0 \
     --learning-rate 1e-4 \
     --max-epochs 100 \
