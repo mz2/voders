@@ -16,6 +16,7 @@ from voders.constants import SAMPLE_RATE
 from voders.scores.models import Note, Score
 
 _UNVOICED_COST = 1e3  # cost of assigning a note onset to an unvoiced / wrong-pitch frame
+_TIMING_WEIGHT = 6.0  # pitch-cost units (≈ semitones) per second a frame sits outside a note's span
 
 
 def align_score_to_f0(
@@ -47,10 +48,30 @@ def align_score_to_f0(
     voiced = np.isfinite(f0) & (f0 > 0)
     frame_midi[voiced] = 69.0 + 12.0 * np.log2(f0[voiced] / 440.0)
 
-    # Per-(note, frame) cost: absolute pitch distance, large where unvoiced.
+    # Per-(note, frame) pitch cost: absolute pitch distance, large where unvoiced.
     pitches = np.array([note.pitch_midi for note in notes], dtype=np.float64)
     diff = np.abs(frame_midi[None, :] - pitches[:, None])
-    cost = np.where(np.isfinite(diff), np.minimum(diff, _UNVOICED_COST), _UNVOICED_COST)
+    pitch_cost = np.where(np.isfinite(diff), np.minimum(diff, _UNVOICED_COST), _UNVOICED_COST)
+
+    # Soft timing anchor: penalise assigning a frame to a note far OUTSIDE that note's nominal score
+    # span (zero inside it). Pure pitch cost cannot separate consecutive SAME-pitch notes — the
+    # monotonic DTW collapses the whole same-pitch run into one note and starves the rest (two p72
+    # notes in a row: the first swallows both notes' frames, the second is left with ~0, so its
+    # re-derived onset/offset land on the wrong frames and validation fails "in tune 0%"). The score
+    # shares the audio's timeline, so anchoring each note to its nominal span splits same-pitch
+    # neighbours at the score boundary and bounds drift. The weight is in pitch-cost units (≈
+    # semitones) per second of out-of-span distance, gentle enough that genuine micro-timing in
+    # voiced, on-pitch frames can still move a boundary by a frame or two.
+    onsets = np.array([note.onset_s for note in notes], dtype=np.float64)
+    offsets = np.array([note.offset_s for note in notes], dtype=np.float64)
+    span_dist = np.maximum.reduce(
+        [
+            np.zeros((n, m)),
+            onsets[:, None] - times[None, :],
+            times[None, :] - offsets[:, None],
+        ]
+    )
+    cost = pitch_cost + _TIMING_WEIGHT * span_dist
 
     # Monotonic DTW: each frame belongs to a note; advance to the next note or stay (legato).
     big = np.inf
