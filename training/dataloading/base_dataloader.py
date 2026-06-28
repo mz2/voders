@@ -95,11 +95,24 @@ class PianoRollAudioDataset(Dataset):
                         chunk_starts.add(full_audio_length - self.sequence_length)
 
                     for chunk_start in sorted(chunk_starts):
-                        label = self._load_labels_chunk(
-                            tsv_path, chunk_start, self.sequence_length
-                        )
-                        chunk_contains_onset = torch.any(label == ONSET_LABEL)
-                        if not self.use_chunks_only_with_onsets or chunk_contains_onset:
+                        if self.use_chunks_only_with_onsets:
+                            # Keep a chunk if any note OVERLAPS it, not only if an onset starts in
+                            # it. A chunk holding just a long note's sustain/tail (whose onset fell
+                            # in the previous chunk) still carries real frame/offset supervision;
+                            # the onset-only test dropped it, starving exactly the offset signal.
+                            # The cheap O(notes) span test on the cached TSV also avoids building
+                            # the full [frames x 127] label tensor here just to discard it and
+                            # rebuild it in __getitem__.
+                            chunk_start_s = chunk_start / SAMPLE_RATE
+                            chunk_end_s = (chunk_start + self.sequence_length) / SAMPLE_RATE
+                            midi = self._load_tsv_cached(tsv_path)
+                            keep = any(
+                                offset > chunk_start_s and onset < chunk_end_s
+                                for onset, offset, _ in midi
+                            )
+                        else:
+                            keep = True
+                        if keep:
                             self.data.append({"path": audio_path, "tsv_path": tsv_path})
                             self.chunk_indices.append((len(self.data) - 1, chunk_start))
                 else:
