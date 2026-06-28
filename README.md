@@ -187,10 +187,16 @@ lyrics:
   languages: [en-us]    # spread coverage; one picked per sample, seeded
 ```
 
+**Sources** — two of them *create* lyrics:
+
 - **vowel** — default, lyric-free.
-- **supplied** — per-note syllables in an optional 4th TSV column.
-- **automatic** — seeded, CPU, dependency-free syllable sampler.
-- **generated** — themed real words from an instruct LLM (`Qwen2.5-0.5B-Instruct`, GPU), cached so replays never re-invoke it; unverified model licenses are refused.
+- **supplied** — per-note syllables in an optional 4th TSV column (author-provided).
+- **automatic** — seeded CPU syllable sampler; draws singable syllables from a checked-in inventory (`en_cv` / `scat`). Deterministic, dependency-free.
+- **generated** — an instruct LLM (`Qwen2.5-0.5B-Instruct`, GPU) writes themed real words, segmented to one syllable per note. Unverified model licenses are refused.
+
+**Pipeline:** `per-note syllables → G2P (espeak | byT5) → vowel-on-the-beat placement → svs lane sings them → alignment validator`. The vowel nucleus carries the pitch from the note onset; consonants sit in short pre-onset/pre-offset windows, so the *labelled* onset stays on the beat — the alignment risk the validator then checks.
+
+**Reproducibility:** `automatic` reproduces from the seed. `generated` is **pinned to a cache artifact** — the (non-deterministic) LLM runs once per `(theme, model, score, seed, n_notes)`, its text is written to `out/<run>/lyrics/<key>.jsonl`, and every replay reuses that file with no model call. So a generated corpus replays byte-identically from the pinned text; the model only ever fills an empty cache.
 
 ```bash
 sudo apt install espeak-ng && uv sync --extra lyrics   # CPU G2P
