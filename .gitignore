@@ -241,6 +241,7 @@ __marimo__/
 
 # Staged trainer input dir (assembled from datasets/ by `just train`)
 syntheticdataset_soulx/
+syntheticdataset_synth/
 
 # Generated/ingested score-coverage sets (regenerable: generate_melodies.py / import_midi.py)
 evals/fixtures/scores_melody/
