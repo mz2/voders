@@ -1,5 +1,8 @@
 # voders
 
+For the end-to-end ACE-Opencpop score → SoulX audio → MML26 training workflow, see
+[Generate a SoulX synthetic singing dataset from ACE-Opencpop](docs/soulx-ace-opencpop.md).
+
 `voders` turns folders of singing scores into a training corpus of `(audio.wav, score.tsv)`
 pairs whose labels are **correct by construction**. Each score is a list of
 `(onset_s, offset_s, pitch_midi)` note rows; the pipeline renders singing audio from it and

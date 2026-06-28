@@ -42,6 +42,32 @@ setup-accomp:
 setup-backends:
     uv sync --project backends/svs
 
+# Clone and sync the standalone Python 3.10 SoulX inference backend. Model weights are separate so
+# a normal setup never triggers a multi-GB download; run `just download-soulx-model` once per host.
+setup-soulx-backend:
+    test -d backends/soulx/SoulX-Singer || git clone --depth 1 https://github.com/Soul-AILab/SoulX-Singer.git backends/soulx/SoulX-Singer
+    uv sync --project backends/soulx
+
+# Download SoulX-Singer weights into the location expected by the backend worker.
+download-soulx-model: setup-soulx-backend
+    uvx --from huggingface-hub hf download Soul-AILab/SoulX-Singer --local-dir backends/soulx/SoulX-Singer/pretrained_models/SoulX-Singer
+
+# Materialise only ACE-Opencpop's symbolic columns (never its ~43 GB audio column). The source is
+# CC BY-NC 4.0; invoking this recipe is an explicit acknowledgement of those non-commercial terms.
+prepare-ace-opencpop SPLIT="train" LIMIT="100":
+    uv sync --extra cpu --extra donors
+    uv run --extra cpu --extra donors python evals/prepare_ace_opencpop.py --split {{SPLIT}} --limit {{LIMIT}} --accept-license
+
+# Render prepared ACE scores with one persistent SoulX model. Prepare scores and download the model
+# first; RESUME=1 continues an interrupted run without regenerating completed samples.
+render-soulx-ace RESUME="1":
+    uv sync --extra cpu --extra gpu
+    VODERS_SVS_PERSISTENT=1 uv run --extra cpu --extra gpu voders run --config configs/soulx_ace_opencpop.yaml {{ if RESUME == "1" { "--resume" } else { "" } }}
+
+# Archive accepted SoulX renders as the same audio.wav/score.tsv corpus shape used by training.
+pack-soulx-ace: setup
+    uv run --extra cpu python evals/corpus_archive.py pack --run-id soulx_ace_opencpop
+
 # Sync the out-of-process ACE-Step accompaniment backend (its own uv project, Python 3.12).
 setup-acestep-backend:
     uv sync --project backends/acestep

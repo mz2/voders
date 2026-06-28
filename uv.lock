@@ -2907,7 +2907,10 @@ dev = [
 ]
 donors = [
     { name = "datasets" },
+    { name = "fsspec" },
+    { name = "huggingface-hub" },
     { name = "librosa" },
+    { name = "pyarrow" },
 ]
 gpu = [
     { name = "torch" },
@@ -2955,6 +2958,8 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'lyrics-gpu'", specifier = ">=0.33" },
     { name = "datasets", marker = "extra == 'donors'", specifier = ">=2.19" },
     { name = "demucs", marker = "extra == 'accomp'", specifier = ">=4.0" },
+    { name = "fsspec", marker = "extra == 'donors'", specifier = ">=2024.5" },
+    { name = "huggingface-hub", marker = "extra == 'donors'", specifier = ">=0.23" },
     { name = "librosa", marker = "extra == 'cpu'", specifier = ">=0.11" },
     { name = "librosa", marker = "extra == 'donors'", specifier = ">=0.11" },
     { name = "librosa", marker = "extra == 'training'" },
@@ -2969,6 +2974,7 @@ requires-dist = [
     { name = "phonemizer", marker = "extra == 'lyrics'", specifier = ">=3.3" },
     { name = "pretty-midi", marker = "extra == 'cpu'", specifier = ">=0.2.11" },
     { name = "pretty-midi", marker = "extra == 'training'" },
+    { name = "pyarrow", marker = "extra == 'donors'", specifier = ">=16" },
     { name = "pydantic", specifier = ">=2.13" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.1" },
     { name = "pytorch-lightning", marker = "extra == 'training'", specifier = ">=2.6.5" },
