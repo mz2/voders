@@ -38,6 +38,11 @@ MODELS = {
 
 MODELS_ROOT = Path(__file__).resolve().parents[1] / "models"
 
+# DiffSinger SVS archives (GitHub releases, unpacked rather than placed file-for-file). The TIGER
+# English voicebank is CC BY-NC-ND 4.0 (NON-COMMERCIAL) — gate it behind your corpus license policy.
+_TIGER_PACK_URL = "https://github.com/spicytigermeat/tiger_diffsinger/releases/download/v106/TIGER_DS_v106_PACK.zip"
+_NSF_VOCODER_URL = "https://github.com/openvpi/vocoders/releases/download/pc-nsf-hifigan-44.1k-hop512-128bin-2025.02/pc_nsf_hifigan_44.1k_hop512_128bin_2025.02.oudep"
+
 
 def _download(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -58,12 +63,61 @@ def _download(url: str, dest: Path) -> None:
     print(f"  done: {dest} ({dest.stat().st_size / 1e6:.1f} MB)")
 
 
+def _extract_zip(archive: Path, dest: Path, *, strip_to: str | None = None) -> None:
+    """Unzip ``archive`` into ``dest``. If ``strip_to`` is given, only members under the first path
+    component containing it are extracted, flattened to ``dest`` (handles the nested TIGER layout)."""
+    import zipfile
+
+    dest.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive) as zf:
+        for member in zf.namelist():
+            if member.endswith("/"):
+                continue
+            if strip_to is not None:
+                if strip_to not in member:
+                    continue
+                rel = member.split(strip_to, 1)[1].lstrip("/")
+            else:
+                rel = member
+            target = dest / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(member) as src, target.open("wb") as out:
+                out.write(src.read())
+
+
+def _download_diffsinger() -> None:
+    """Fetch + unpack the TIGER voicebank and NSF-HiFiGAN vocoder into models/diffsinger/."""
+    import tempfile
+
+    root = MODELS_ROOT / "diffsinger"
+    tiger_dir, voc_dir = root / "tiger", root / "nsf_hifigan"
+    if (tiger_dir / "dsacoustic" / "acoustic.onnx").exists() and any(voc_dir.glob("*.onnx")):
+        print(f"  exists, skipping: {tiger_dir} and {voc_dir}")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        pack = tmp_path / "tiger_pack.zip"
+        _download(_TIGER_PACK_URL, pack)
+        # pack -> .../Voice Library/TIGER_DS_v106.zip (the actual voicebank) -> tiger/
+        _extract_zip(pack, tmp_path / "pack")
+        inner = next((tmp_path / "pack").rglob("TIGER_DS_v*.zip"))
+        _extract_zip(inner, tiger_dir)
+        voc = tmp_path / "vocoder.zip"
+        _download(_NSF_VOCODER_URL, voc)  # .oudep is a renamed zip
+        _extract_zip(voc, voc_dir)
+    print(f"  done: {tiger_dir} ({sum(f.stat().st_size for f in tiger_dir.rglob('*')) / 1e6:.0f} MB)")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     which = args or ["rvc"]
     for group in which:
+        if group == "diffsinger":
+            print(f"== diffsinger -> {MODELS_ROOT / 'diffsinger'} ==")
+            _download_diffsinger()
+            continue
         if group not in MODELS:
-            print(f"unknown model group {group!r}; known: {sorted(MODELS)}")
+            print(f"unknown model group {group!r}; known: {sorted([*MODELS, 'diffsinger'])}")
             return 2
         print(f"== {group} -> {MODELS_ROOT} ==")
         for relpath, url in MODELS[group]:

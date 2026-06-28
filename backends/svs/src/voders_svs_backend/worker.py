@@ -229,6 +229,7 @@ def _handle(req: dict) -> dict:
         if not lyrics:
             return {"ok": False, "error": "nnsvs requires per-note lyrics/syllables"}
         from voders_svs_backend.nnsvs_engine import (
+            DEFAULT_EXPR_SCALE,
             DEFAULT_MODEL,
             character_factor,
             donor_formant_factor,
@@ -242,7 +243,12 @@ def _handle(req: dict) -> dict:
             factor = character_factor(model_ref[len("nnsvs:") :])
         elif "/" in model_ref and not model_ref.endswith(".wav"):
             base = model_ref  # a real NNSVS voicebank id
-        audio = render_nnsvs(notes, lyrics, sr, model_ref=base, formant_factor=factor)
+        # expr_scale: fraction of NNSVS's own vibrato/scoop kept by the pitch-lock (request-tunable
+        # for A/B-ing naturalness vs the validator's pitch gate); defaults to the engine default.
+        expr_scale = float(req.get("expr_scale", DEFAULT_EXPR_SCALE))
+        audio = render_nnsvs(
+            notes, lyrics, sr, model_ref=base, formant_factor=factor, expr_scale=expr_scale
+        )
         engine = "nnsvs"
     else:
         # Formant synth only when nnsvs was NOT requested (a config that explicitly chose it).

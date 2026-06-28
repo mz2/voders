@@ -1,0 +1,33 @@
+# SVS lane via the out-of-process DiffSinger backend (backends/diffsinger, ONNX acoustic + NSF-
+# HiFiGAN vocoder, Python 3.11). f0 + per-phoneme durations are model inputs, so score pitch/timing
+# are exact by construction (label-aligned without any relock). Open-vowel render (no lyrics block),
+# so no G2P/espeak dependency — this isolates the lane + validator.
+#
+# NOTE: the TIGER voicebank is CC BY-NC-ND 4.0 (non-commercial). Fine for evaluation; gate it behind
+# your corpus license policy before shipping commercial output.
+run_id: diffsinger
+master_seed: 20260628
+
+scores: evals/fixtures/scores/score_00[0-1].tsv
+output_root: out/diffsinger
+
+voices:
+  - voice_id: tiger_glam
+    kind: svs_voicebank
+    license: "TIGER DiffSinger voicebank (CC BY-NC-ND 4.0, non-commercial)"
+    consent_verified: true
+    model_ref: "diffsinger:tiger_glam"
+
+lanes:
+  svs:
+    enabled: true
+    backend: diffsinger
+    mode: force_score_f0
+
+validator:
+  onset_ms: 50
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.80
+  snr_floor_db: 0

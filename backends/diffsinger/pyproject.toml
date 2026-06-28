@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voders-diffsinger-backend"
+version = "0.1.0"
+description = "Out-of-process DiffSinger SVS render backend for voders (ONNX, separate dependency chain)"
+# DiffSinger runs as two self-contained ONNX models (acoustic + NSF-HiFiGAN vocoder) driven by an
+# explicit tensor contract — phoneme tokens, per-phoneme frame durations, and per-frame f0 go in,
+# mel + waveform come out. Because f0/durations are inputs, score pitch/timing are exact by
+# construction (no WORLD relock like the nnsvs lane). Kept as its own uv project so the heavy
+# onnxruntime chain stays out of the 3.14 core, which talks to it across a process boundary
+# (src/voders/render/backend_bridge.py). aarch64 wheels for onnxruntime (CPU) are on PyPI.
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "numpy<2",
+    "scipy>=1.11",       # resample_poly 44.1k -> core sample rate
+    "soundfile>=0.12",
+    "pyyaml>=6",
+    # GPU build (CUDAExecutionProvider). aarch64 + CUDA 13 (GB10) is served only as an onnxruntime
+    # nightly off the Azure feed below; this exact dev build is verified to expose CUDAExecutionProvider
+    # on the GB10. The engine prefers CUDA and falls back to CPU automatically. Bump this pin if the
+    # nightly is rotated out of the feed (`pip index versions` against the index URL lists current ones).
+    "onnxruntime-gpu==1.27.0.dev20260511001",
+    # The CUDA provider links cublas/cufft/curand/cudart from the system CUDA 13 toolkit; the only
+    # piece not on the system is cuDNN 9, supplied here (aarch64 wheel). The engine preloads it so
+    # onnxruntime's dlopen("libcudnn.so.9") resolves.
+    "nvidia-cudnn-cu13>=9.23",
+]
+
+# Pull onnxruntime-gpu from the CUDA-13 nightly feed (aarch64 wheels), everything else from PyPI.
+[tool.uv.sources]
+onnxruntime-gpu = { index = "ort-cuda-nightly" }
+
+[[tool.uv.index]]
+name = "ort-cuda-nightly"
+url = "https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/ort-cuda-13-nightly/pypi/simple/"
+explicit = true
+
+[project.scripts]
+voders-diffsinger-backend = "voders_diffsinger_backend.worker:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

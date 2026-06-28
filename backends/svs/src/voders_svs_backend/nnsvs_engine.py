@@ -48,6 +48,14 @@ _ROW = {
 }
 DEFAULT_MODEL = "r9y9/yoko_latest"
 
+# Pitch-lock keeps a *toned-down* copy of NNSVS's own pitch motion (vibrato + onset scoop) re-centred
+# on the exact score pitch, instead of a dead-flat f0. ``expr_scale`` is the fraction of that motion
+# kept (0.0 = flat/robotic, 1.0 = full NNSVS depth). The residual wobble is clamped to
+# ``_EXPR_MAX_CENTS`` so it stays under the validator's ~25-cent pitch tolerance and the sample
+# remains corpus-valid.
+DEFAULT_EXPR_SCALE = 0.3
+_EXPR_MAX_CENTS = 20.0
+
 # Voice "characters" derived from the base voicebank by WORLD formant (vocal-tract-length) warping:
 # a factor < 1 lowers the formants (longer tract -> male/deeper), > 1 raises them (brighter/child).
 # Pitch is always the score's, so a character changes timbre, not the sung notes. This yields
@@ -230,19 +238,41 @@ def _voiced_runs(audio: np.ndarray, sr: int, hop_ms: float = 5.0) -> list[tuple[
     return [(a, b) for a, b in runs if b - a >= frame]
 
 
+def _toned_f0(f0_seg: np.ndarray, target_hz: float, expr_scale: float) -> np.ndarray:
+    """Re-centre a segment's f0 contour on ``target_hz`` keeping a scaled fraction of its motion.
+
+    The expressive component is the contour's deviation, in cents, from its own voiced median
+    (vibrato + onset scoop + drift). We scale it by ``expr_scale``, clamp to ``_EXPR_MAX_CENTS``
+    (under the validator's pitch gate), and apply it around the exact score pitch. Unvoiced/zero
+    frames hold at the target. ``expr_scale<=0`` or an all-unvoiced segment yields a flat contour.
+    """
+    n = f0_seg.shape[0]
+    voiced = f0_seg > 0
+    if expr_scale <= 0.0 or not np.any(voiced):
+        return np.full(n, target_hz, dtype=np.float64)
+    median_hz = float(np.median(f0_seg[voiced]))
+    dev_cents = np.zeros(n, dtype=np.float64)
+    dev_cents[voiced] = 1200.0 * np.log2(f0_seg[voiced] / median_hz)
+    dev_cents = np.clip(expr_scale * dev_cents, -_EXPR_MAX_CENTS, _EXPR_MAX_CENTS)
+    return target_hz * 2.0 ** (dev_cents / 1200.0)
+
+
 def align_and_pitchlock(
     audio: np.ndarray,
     notes: list[list[float]],
     sr: int,
     frame_period: float = 5.0,
     formant_factor: float = 1.0,
+    expr_scale: float = DEFAULT_EXPR_SCALE,
 ) -> np.ndarray:
     """Re-place each sung syllable on the score grid at the exact score pitch (WORLD resynthesis).
 
-    Keeps NNSVS's timbre + consonants (the segment's spectral envelope / aperiodicity) but imposes
-    the score's f0 (flat at the MIDI pitch) and onset/offset, so onsets/pitch are exact by
-    construction and the sample passes the validator. The expressive (non-locked) render is what
-    lands in rejected/ today; this is the corpus-valid variant.
+    Keeps NNSVS's timbre + consonants (the segment's spectral envelope / aperiodicity) and a
+    *toned-down* copy of its pitch motion — the within-note vibrato/scoop, scaled by ``expr_scale``
+    and re-centred on the score's MIDI pitch — while snapping onset/offset to the grid. The residual
+    wobble is clamped to ``_EXPR_MAX_CENTS`` so onsets/pitch stay correct by construction and the
+    sample passes the validator. ``expr_scale=0.0`` reproduces the old dead-flat (robotic) lock; the
+    fully expressive (non-locked) render is what lands in rejected/ today.
     """
     import pyworld
 
@@ -269,7 +299,7 @@ def align_and_pitchlock(
                 idx = np.clip(
                     np.round(np.linspace(0, sp.shape[0] - 1, n_tgt)).astype(int), 0, sp.shape[0] - 1
                 )
-                f0_tgt = np.full(n_tgt, _midi_to_hz(int(pitch)), dtype=np.float64)
+                f0_tgt = _toned_f0(f0[idx], _midi_to_hz(int(pitch)), expr_scale)
                 note_audio = pyworld.synthesize(f0_tgt, sp[idx], ap[idx], sr, frame_period)
         if note_audio is None or note_audio.size == 0 or float(np.max(np.abs(note_audio))) < 1e-4:
             note_audio = _tone(int(pitch), n_samp, sr)  # fallback: in-tune tone at the score pitch
@@ -313,12 +343,15 @@ def render_nnsvs(
     model_ref: str = DEFAULT_MODEL,
     pitch_lock: bool = True,
     formant_factor: float = 1.0,
+    expr_scale: float = DEFAULT_EXPR_SCALE,
 ) -> np.ndarray:
     """Render natural singing for ``notes`` + ``syllables`` with NNSVS, resampled to ``sr``.
 
-    With ``pitch_lock`` (default), each sung syllable is re-placed on the score grid at the exact
-    score pitch/timing via WORLD resynthesis (corpus-valid: passes the onset/pitch gates while
-    keeping NNSVS timbre). Set it False for the raw, expressive render.
+    With ``pitch_lock`` (default), each sung syllable is re-placed on the score grid at the score
+    timing via WORLD resynthesis (corpus-valid: passes the onset/pitch gates while keeping NNSVS
+    timbre). ``expr_scale`` controls how much of NNSVS's own vibrato/scoop survives the lock
+    (0.0 = flat, 1.0 = full depth); the residual is clamped under the validator's pitch tolerance.
+    Set ``pitch_lock`` False for the raw, fully expressive render.
     """
     import pysinsy
     from nnmnkwii.io import hts
@@ -345,5 +378,7 @@ def render_nnsvs(
     if model_sr != sr:
         wav = resample_poly(wav, sr, model_sr)
     if pitch_lock:
-        wav = align_and_pitchlock(wav, notes, sr, formant_factor=formant_factor)
+        wav = align_and_pitchlock(
+            wav, notes, sr, formant_factor=formant_factor, expr_scale=expr_scale
+        )
     return wav.astype(np.float32)

@@ -155,6 +155,24 @@ bench: setup
 demo-svs-nnsvs: setup setup-backends
     uv run voders run --config evals/fixtures/svs_nnsvs.yaml
 
+# Sync the out-of-process DiffSinger backend (ONNX acoustic + NSF-HiFiGAN vocoder, Python 3.11).
+# Pulls onnxruntime-gpu from the aarch64 CUDA-13 nightly feed (see backends/diffsinger/pyproject.toml).
+setup-diffsinger-backend:
+    uv sync --project backends/diffsinger
+
+# Download the TIGER English voicebank + NSF-HiFiGAN vocoder into models/diffsinger/ (git-ignored).
+# TIGER is CC BY-NC-ND 4.0 (NON-COMMERCIAL) — gate it behind your corpus license policy.
+download-diffsinger: setup
+    uv run python evals/download_models.py diffsinger
+
+# Real DiffSinger neural singing on the GPU, then evaluate. On a GB10 (sm_121) the onnxruntime CUDA
+# provider JITs sm_121 PTX via the CUDA-13.1 forward-compat libcuda, pointed to by LD_LIBRARY_PATH
+# (install once: `sudo apt-get install -y cuda-compat-13-1`). Set CUDA_COMPAT="" on a native CUDA-13.1
+# driver, or to a different path. The backend subprocess inherits this env.
+demo-diffsinger CUDA_COMPAT="/usr/local/cuda-13.1/compat": setup setup-diffsinger-backend download-diffsinger
+    LD_LIBRARY_PATH="{{CUDA_COMPAT}}:${LD_LIBRARY_PATH}" uv run voders run --config evals/fixtures/diffsinger.yaml
+    uv run voders eval --manifest out/diffsinger/manifest.jsonl
+
 # Download the RVC base model weights (HuBERT + RMVPE) into models/ (git-ignored).
 download-rvc-models: setup
     uv run python evals/download_models.py rvc

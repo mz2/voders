@@ -113,6 +113,7 @@ def render_via_backend(
     timeout_s: float = 300.0,
     lyrics: list[str | None] | None = None,
     phonemes: list[dict] | None = None,
+    expr_scale: float | None = None,
 ) -> np.ndarray:
     """Render ``score`` in the backend project ``name`` and return the audio.
 
@@ -143,6 +144,9 @@ def render_via_backend(
             request["lyrics"] = list(lyrics)
         if phonemes:
             request["phonemes"] = phonemes
+        # NNSVS pitch-lock vibrato retention; omitted => the backend uses its own default.
+        if expr_scale is not None:
+            request["expr_scale"] = float(expr_scale)
 
         if _persistent_enabled():
             # Reuse one model-resident worker (no per-sample reload, single GPU model). The worker

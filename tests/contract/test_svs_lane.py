@@ -74,16 +74,38 @@ def test_rederive_labels_carries_measured_score(small_score: Score, donor_ah: Vo
     assert dev >= 0.0
 
 
-def test_diffsinger_backend_requires_gpu_and_render_raises(
-    small_score: Score, donor_ah: Voice
+def test_diffsinger_backend_is_out_of_process(
+    small_score: Score, donor_ah: Voice, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """diffsinger backend: requires_gpu() True and render raises a clear RuntimeError."""
-    lane = SvsLane({"backend": "diffsinger"})
-    assert lane.requires_gpu() is True
+    """diffsinger is now a wired out-of-process backend: requires_gpu() is False (it runs in its own
+    uv project, not the core process) and the lane routes it to the diffsinger backend project."""
+    import numpy as np
 
-    voice = _svs_voice(donor_ah)
-    with pytest.raises(RuntimeError):
-        lane.render(RenderRequest(score=small_score, voice=voice, seed=1))
+    import voders.render.backend_bridge as bb
+
+    lane = SvsLane({"backend": "diffsinger"})
+    assert lane.requires_gpu() is False
+
+    captured: dict[str, str] = {}
+
+    def fake_render_via_backend(project, module, *a, **k):  # noqa: ANN001, ANN202
+        captured["project"] = project
+        captured["module"] = module
+        return np.zeros(256, dtype=np.float32)
+
+    monkeypatch.setattr(bb, "render_via_backend", fake_render_via_backend)
+    lane.render(RenderRequest(score=small_score, voice=_svs_voice(donor_ah), seed=1))
+    assert captured == {
+        "project": "diffsinger",
+        "module": "voders_diffsinger_backend.worker",
+    }
+
+
+def test_unknown_backend_raises(small_score: Score, donor_ah: Voice) -> None:
+    """An unrecognised backend is rejected with a clear error listing the valid ones."""
+    lane = SvsLane({"backend": "nope"})
+    with pytest.raises(ValueError, match="unknown SVS backend"):
+        lane.render(RenderRequest(score=small_score, voice=_svs_voice(donor_ah), seed=1))
 
 
 def test_importing_module_does_not_import_torch() -> None:

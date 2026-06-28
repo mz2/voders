@@ -18,8 +18,11 @@ Backends (``options["backend"]``):
 * ``"nnsvs"``: the NNSVS toolkit, run **out of process** in its own uv project
   (``backends/svs``, Python 3.11) via :mod:`voders.render.backend_bridge`, because its dependency
   chain conflicts with the 3.14 core.
-* ``"diffsinger"``: a production in-process GPU backend; ``torch`` is imported lazily inside
-  ``render`` (FR-009) and, since the toolkit/weights are not wired here, ``render`` raises.
+* ``"diffsinger"``: the DiffSinger toolkit (ONNX acoustic + NSF-HiFiGAN vocoder), run **out of
+  process** in its own uv project (``backends/diffsinger``, Python 3.11) via
+  :mod:`voders.render.backend_bridge`. f0 + per-phoneme durations are model inputs, so score
+  pitch/timing are exact by construction (no relock); GPU is used inside the backend when the
+  onnxruntime ``gpu`` extra is installed, else CPU.
 """
 
 from __future__ import annotations
@@ -31,11 +34,15 @@ from voders.scores.models import Note, Score
 from voders.seeds import rng
 
 _CPU_BACKENDS = frozenset({"cpu"})
-_SUBPROCESS_BACKENDS = frozenset({"nnsvs"})  # out-of-process, own uv project
-_GPU_BACKENDS = frozenset({"diffsinger"})  # in-process GPU
+# Out-of-process backends, each its own uv project: name -> (project dir under backends/, worker
+# module). Both run the real toolkit across a process boundary (separate dependency chains).
+_SUBPROCESS_BACKENDS = {
+    "nnsvs": ("svs", "voders_svs_backend.worker"),
+    "diffsinger": ("diffsinger", "voders_diffsinger_backend.worker"),
+}
 # Backends that can sing real phonemes from per-note syllables (FR-006). The ``cpu`` stand-in sings
 # an open vowel and does NOT articulate, so it never sets ``lyric_articulated``.
-_ARTICULATING_BACKENDS = _SUBPROCESS_BACKENDS | _GPU_BACKENDS
+_ARTICULATING_BACKENDS = frozenset(_SUBPROCESS_BACKENDS)
 _DEFAULT_HUMANIZE_MS = 20.0
 _ONSET_TOLERANCE_MS = 50.0  # SC-002
 
@@ -49,9 +56,8 @@ class SvsLane:
         self.options = options or {}
 
     def requires_gpu(self) -> bool:
-        """True only for in-process GPU backends; ``cpu`` and out-of-process ``nnsvs`` are False."""
-        backend = str(self.options.get("backend", "cpu"))
-        return backend in _GPU_BACKENDS
+        """False for every backend: ``cpu`` is in-process CPU and the others run out-of-process."""
+        return False
 
     def _opt(self, req: RenderRequest, key: str, default: object) -> object:
         if key in req.options:
@@ -60,12 +66,10 @@ class SvsLane:
 
     def render(self, req: RenderRequest) -> RenderResult:
         backend = str(self._opt(req, "backend", "cpu"))
-        if backend in _GPU_BACKENDS:
-            return self._render_gpu(backend)
         if backend not in _CPU_BACKENDS and backend not in _SUBPROCESS_BACKENDS:
             raise ValueError(
                 f"unknown SVS backend {backend!r}; expected one of "
-                f"{sorted(_CPU_BACKENDS | _SUBPROCESS_BACKENDS | _GPU_BACKENDS)}"
+                f"{sorted(_CPU_BACKENDS | set(_SUBPROCESS_BACKENDS))}"
             )
 
         mode = str(self._opt(req, "mode", "force_score_f0"))
@@ -120,14 +124,19 @@ class SvsLane:
         if backend in _SUBPROCESS_BACKENDS:
             from voders.render.backend_bridge import render_via_backend
 
+            project, module = _SUBPROCESS_BACKENDS[backend]
+            # expr_scale is the nnsvs pitch-lock vibrato knob; the diffsinger worker ignores it.
+            raw = self._opt(req, "expr_scale", None)
+            expr_scale = float(raw) if isinstance(raw, int | float | str) else None
             return render_via_backend(
-                "svs",
-                "voders_svs_backend.worker",
+                project,
+                module,
                 score,
                 req.seed,
                 model_ref=req.voice.model_ref,
                 lyrics=req.lyrics,
                 phonemes=self._phoneme_payload(req, score),
+                expr_scale=expr_scale,
             )
         from voders.render.deterministic import DeterministicLane
 
@@ -161,22 +170,6 @@ class SvsLane:
                 f"{_ONSET_TOLERANCE_MS:.0f} ms tolerance (SC-002)"
             )
         return RenderResult(audio=audio, label_score=rederived, notes=notes)
-
-    @staticmethod
-    def _render_gpu(backend: str) -> RenderResult:
-        import importlib
-
-        try:
-            importlib.import_module("torch")
-        except ImportError as exc:
-            raise RuntimeError(
-                f"SVS backend {backend!r} requires the 'gpu' extra (torch is not installed)"
-            ) from exc
-        raise RuntimeError(
-            f"SVS backend {backend!r} requires the GPU toolkit (install the 'gpu' extra and the "
-            f"{backend} model weights); not available here"
-        )
-
 
 def _humanize_timing(score: Score, seed: int, humanize_ms: float) -> Score:
     """Shift each note by a small seeded jitter, keeping its duration (FR-013 reproducible)."""
