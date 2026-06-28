@@ -144,6 +144,17 @@ train RUN_IDS="donor_pool:40 lyrics_pool lyrics_pool_words klangio_fifth_0 klang
     uv run --extra cpu --extra gpu python evals/corpus_archive.py stage --clean --run-ids {{RUN_IDS}} --out syntheticdataset_soulx {{ if RELABEL == "1" { "--relabel-offsets" } else { "" } }}
     bash training/train_soulx.sh
 
+# Synthetic-only A/B: train on the hand-made synthetic sequences (donor_pool + its augmentations, and
+# the other authored-score pools), IGNORING the Klangio-transcribed training renders (klangio_fifth_*)
+# entirely — validation still runs on the held-out Klangio set under external/. Stages into its OWN
+# dir (syntheticdataset_synth), so it never clobbers a running `just train`. RELABEL=1 works here too,
+# though donor_pool is the deterministic lane (exact labels) so it has nothing to repair. Use
+# RUN_IDS="donor_pool" for the exact-label deterministic data only.
+train-synthetic RUN_IDS="donor_pool lyrics_pool lyrics_pool_words melody_pool":
+    uv sync --extra cpu --extra gpu --extra training
+    uv run --extra cpu --extra gpu python evals/corpus_archive.py stage --clean --run-ids {{RUN_IDS}} --out syntheticdataset_synth {{ if RELABEL == "1" { "--relabel-offsets" } else { "" } }}
+    bash training/train_synthetic.sh
+
 # Run the full test suite.
 test: setup
     uv run pytest
