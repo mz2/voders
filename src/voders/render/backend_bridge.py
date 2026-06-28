@@ -113,6 +113,7 @@ def render_via_backend(
     timeout_s: float = 300.0,
     lyrics: list[str | None] | None = None,
     phonemes: list[dict] | None = None,
+    language: str = "",
 ) -> np.ndarray:
     """Render ``score`` in the backend project ``name`` and return the audio.
 
@@ -143,6 +144,8 @@ def render_via_backend(
             request["lyrics"] = list(lyrics)
         if phonemes:
             request["phonemes"] = phonemes
+        if language:
+            request["language"] = language
 
         if _persistent_enabled():
             # Reuse one model-resident worker (no per-sample reload, single GPU model). The worker
@@ -164,7 +167,11 @@ def render_via_backend(
                 raise RuntimeError(f"backend {name!r} failed (exit {proc.returncode}): {tail}")
         if not out_wav.exists():
             raise RuntimeError(f"backend {name!r} produced no audio at {out_wav}")
-        audio, _ = read_wav(out_wav)
+        audio, csr = read_wav(out_wav)
+        if csr != sr:  # SoulX emits 24 kHz; resample to the core rate
+            import librosa
+
+            audio = librosa.resample(audio, orig_sr=csr, target_sr=sr)
         return audio
 
 

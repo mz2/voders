@@ -31,11 +31,16 @@ from voders.scores.models import Note, Score
 from voders.seeds import rng
 
 _CPU_BACKENDS = frozenset({"cpu"})
-_SUBPROCESS_BACKENDS = frozenset({"nnsvs"})  # out-of-process, own uv project
+# Out-of-process backends → (project dir under backends/, worker module). nnsvs = formant/NNSVS
+# voicebank; soulx = SoulX-Singer zero-shot SVS (English/Mandarin, GB10).
+_SUBPROCESS_BACKENDS: dict[str, tuple[str, str]] = {
+    "nnsvs": ("svs", "voders_svs_backend.worker"),
+    "soulx": ("soulx", "voders_soulx_backend.worker"),
+}
 _GPU_BACKENDS = frozenset({"diffsinger"})  # in-process GPU
 # Backends that can sing real phonemes from per-note syllables (FR-006). The ``cpu`` stand-in sings
 # an open vowel and does NOT articulate, so it never sets ``lyric_articulated``.
-_ARTICULATING_BACKENDS = _SUBPROCESS_BACKENDS | _GPU_BACKENDS
+_ARTICULATING_BACKENDS = frozenset(_SUBPROCESS_BACKENDS) | _GPU_BACKENDS
 _DEFAULT_HUMANIZE_MS = 20.0
 _ONSET_TOLERANCE_MS = 50.0  # SC-002
 
@@ -65,7 +70,7 @@ class SvsLane:
         if backend not in _CPU_BACKENDS and backend not in _SUBPROCESS_BACKENDS:
             raise ValueError(
                 f"unknown SVS backend {backend!r}; expected one of "
-                f"{sorted(_CPU_BACKENDS | _SUBPROCESS_BACKENDS | _GPU_BACKENDS)}"
+                f"{sorted(_CPU_BACKENDS | frozenset(_SUBPROCESS_BACKENDS) | _GPU_BACKENDS)}"
             )
 
         mode = str(self._opt(req, "mode", "force_score_f0"))
@@ -79,8 +84,10 @@ class SvsLane:
             raw = self._opt(req, "humanize_ms", _DEFAULT_HUMANIZE_MS)
             humanize_ms = float(raw) if isinstance(raw, int | float | str) else _DEFAULT_HUMANIZE_MS
             return self._render_rederive(req, backend, humanize_ms)
+        if mode == "rederive":
+            return self._render_rederive_keep(req, backend)
         raise ValueError(
-            f"unknown SVS mode {mode!r}; expected 'force_score_f0' or 'rederive_labels'"
+            f"unknown SVS mode {mode!r}; expected force_score_f0 | rederive_labels | rederive"
         )
 
     @staticmethod
@@ -120,15 +127,25 @@ class SvsLane:
         if backend in _SUBPROCESS_BACKENDS:
             from voders.render.backend_bridge import render_via_backend
 
-            return render_via_backend(
-                "svs",
-                "voders_svs_backend.worker",
+            project, module = _SUBPROCESS_BACKENDS[backend]
+            # SoulX does its own g2p from per-note syllables + language; nnsvs takes core-side
+            # espeak phoneme runs. Pass language only to SoulX.
+            phonemes = None if backend == "soulx" else self._phoneme_payload(req, score)
+            audio = render_via_backend(
+                project,
+                module,
                 score,
                 req.seed,
                 model_ref=req.voice.model_ref,
                 lyrics=req.lyrics,
-                phonemes=self._phoneme_payload(req, score),
+                phonemes=phonemes,
+                language=req.language if backend == "soulx" else "",
             )
+            if backend == "soulx":
+                # SoulX is generative: it sings the score pitch but with a near-constant onset
+                # latency. Shift it onto the score grid so onsets/labels line up (FR-007).
+                audio = _align_to_score(audio, score)
+            return audio
         from voders.render.deterministic import DeterministicLane
 
         return (
@@ -136,6 +153,27 @@ class SvsLane:
             .render(RenderRequest(score=score, voice=req.voice, seed=req.seed, options=req.options))
             .audio
         )
+
+    def _render_rederive_keep(self, req: RenderRequest, backend: str) -> RenderResult:
+        """Generative backends (SoulX): render, then DERIVE the label from the actual audio and keep
+        it (option 1). The audio sings the score pitch but with its own micro-timing, so a forced
+        score label would be wrong; the re-derived onsets/offsets make the (audio, label) pair
+        self-consistent. Pitches stay the score's (the backend sang them); only timing is detected.
+        """
+        from voders.validate.f0_align import align_score_to_f0
+
+        audio = self._render_audio(req, req.score, backend)
+        # F0-based alignment (not RMS): legato singing has no energy gaps, so onsets come from the
+        # pitch contour the validator itself reads.
+        rederived, max_dev_ms = align_score_to_f0(audio, req.score)
+        notes: dict[str, object] = {
+            "mode": "rederive",
+            "backend": backend,
+            "max_onset_dev_ms": max_dev_ms,  # how far the sung timing drifted from the source score
+        }
+        if self._articulated(req, backend):
+            notes["lyric_articulated"] = True
+        return RenderResult(audio=audio, label_score=rederived, notes=notes)
 
     def _render_rederive(
         self, req: RenderRequest, backend: str, humanize_ms: float
@@ -176,6 +214,23 @@ class SvsLane:
             f"SVS backend {backend!r} requires the GPU toolkit (install the 'gpu' extra and the "
             f"{backend} model weights); not available here"
         )
+
+
+def _align_to_score(audio: np.ndarray, score: Score) -> np.ndarray:
+    """Shift generative audio onto the score grid by cross-correlating its energy with a synthetic
+    note-energy carrier (1.0 during notes, 0 in rests). Compensates a converter/SVS's onset latency
+    so onsets/pitch line up with the labels — reuses the voice-conversion lane's aligner."""
+    from voders.constants import SAMPLE_RATE
+    from voders.render.voiceconv import _align_to_source
+
+    carrier = np.zeros(audio.size, dtype=np.float32)
+    for note in score.notes:
+        a = int(round(note.onset_s * SAMPLE_RATE))
+        b = min(int(round(note.offset_s * SAMPLE_RATE)), carrier.size)
+        if b > a:
+            carrier[a:b] = 1.0
+    aligned, _ = _align_to_source(audio, carrier)
+    return aligned
 
 
 def _humanize_timing(score: Score, seed: int, humanize_ms: float) -> Score:

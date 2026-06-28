@@ -26,6 +26,25 @@ MAX_FLOAT32_VALUE = torch.finfo(torch.float32).max
 MAX_VELOCITY = 128.0
 
 
+def _soundfile_load(audio_path, offset_src, num_frames_src):
+    """Read audio via soundfile, returning ``(tensor[channels, frames], sr)``.
+
+    A fallback for ``torchaudio.load``: its libsndfile backend can raise a spurious LibsndfileError
+    under many concurrent dataloader workers, while a direct soundfile read is reliable.
+    """
+    if num_frames_src > 0:
+        data, sr = soundfile.read(
+            str(audio_path),
+            start=offset_src,
+            frames=num_frames_src,
+            dtype="float32",
+            always_2d=True,
+        )
+    else:
+        data, sr = soundfile.read(str(audio_path), dtype="float32", always_2d=True)
+    return torch.from_numpy(data.T.copy()), sr
+
+
 class PianoRollAudioDataset(Dataset):
     def __init__(
         self,
@@ -185,14 +204,20 @@ class PianoRollAudioDataset(Dataset):
                 file_sr = info.sample_rate
                 offset_src = int(round(offset * file_sr / SAMPLE_RATE))
                 num_frames_src = int(round(num_frames * file_sr / SAMPLE_RATE))
-                audio, sr = torchaudio.load(
-                    str(audio_path),
-                    frame_offset=offset_src,
-                    num_frames=num_frames_src,
-                    normalize=True,
-                )
+                try:
+                    audio, sr = torchaudio.load(
+                        str(audio_path),
+                        frame_offset=offset_src,
+                        num_frames=num_frames_src,
+                        normalize=True,
+                    )
+                except Exception:  # torchaudio/libsndfile is racy under many workers; soundfile is
+                    audio, sr = _soundfile_load(audio_path, offset_src, num_frames_src)
             else:
-                audio, sr = torchaudio.load(str(audio_path), normalize=True)
+                try:
+                    audio, sr = torchaudio.load(str(audio_path), normalize=True)
+                except Exception:
+                    audio, sr = _soundfile_load(audio_path, 0, -1)
 
         if sr != SAMPLE_RATE:
             audio = torchaudio.functional.resample(
