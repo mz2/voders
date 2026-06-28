@@ -493,7 +493,7 @@ class LightningModuleSingingVoice(pl.LightningModule):
         results = []
         # frame_thresh controls where notes are cut off, so it must be swept finely for offsets.
         for onset_thresh in np.linspace(0.1, 0.9, 5):  # Wow! You are really curious about the code!
-            for frame_thresh in np.linspace(0.1, 0.9, 9):  # Do not be shy to mess around these values
+            for frame_thresh in np.linspace(0.03, 0.9, 10):  # Do not be shy to mess around these values
                 for example in self.examples_validation:     # But mind that the more threshold combinations that you explore
                     predicted_notes = output_to_notes_polyphonic( # The more time each validation epoch will take
                         example["predicted_frames"],

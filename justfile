@@ -18,6 +18,9 @@ manifest := "out/smoke/manifest.jsonl"
 # name, so this is a variable: enable with `RELABEL=1 just train` (env) or `just RELABEL=1 train`.
 RELABEL := env_var_or_default("RELABEL", "0")
 
+# Frame-head positive-class weight for `train-synthetic`. Sweep with `FRAME_WEIGHT=8 just train-synthetic`.
+FRAME_WEIGHT := env_var_or_default("FRAME_WEIGHT", "16")
+
 # List available actions.
 default:
     @just --list
@@ -153,7 +156,7 @@ train RUN_IDS="donor_pool:40 lyrics_pool lyrics_pool_words klangio_fifth_0 klang
 train-synthetic RUN_IDS="donor_pool lyrics_pool lyrics_pool_words melody_pool":
     uv sync --extra cpu --extra gpu --extra training
     uv run --extra cpu --extra gpu python evals/corpus_archive.py stage --clean --run-ids {{RUN_IDS}} --out syntheticdataset_synth {{ if RELABEL == "1" { "--relabel-offsets" } else { "" } }}
-    bash training/train_synthetic.sh
+    FRAME_WEIGHT={{FRAME_WEIGHT}} bash training/train_synthetic.sh
 
 # Run the full test suite.
 test: setup
