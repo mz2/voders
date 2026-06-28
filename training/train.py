@@ -190,9 +190,11 @@ def main():
     data_group.add_argument(
         "--eval-metric",
         type=str,
-        default="COnP_f1",
+        default="COnPOff_f1",
         choices=list(METRICS_REGISTRY.keys()),
-        help="Metric to track to select the best checkpoint",
+        help="Metric to track to select the best checkpoint. Defaults to the offset-aware "
+        "COnPOff_f1; COnP_f1 ignores offsets (offset_ratio=None), so checkpoint and "
+        "early-stopping selection would be blind to note end-times.",
     )
 
     audio_group = parser.add_argument_group("Audio Processing")
@@ -252,6 +254,27 @@ def main():
         type=float,
         default=1.0,
         help="Weight for frame loss (positive class weight)",
+    )
+    train_group.add_argument(
+        "--onset-loss-weight",
+        type=float,
+        default=1.0,
+        help="Scalar multiplier on the onset head in the summed loss (distinct from "
+        "--onset-weight, which is the BCE positive-class weight)",
+    )
+    train_group.add_argument(
+        "--frame-loss-weight",
+        type=float,
+        default=1.0,
+        help="Scalar multiplier on the frame head in the summed loss. The frame head alone "
+        "determines offsets, so raise this to emphasise note end-times (distinct from "
+        "--frame-weight, the BCE positive-class weight)",
+    )
+    train_group.add_argument(
+        "--contour-loss-weight",
+        type=float,
+        default=1.0,
+        help="Scalar multiplier on the contour head in the summed loss",
     )
     train_group.add_argument(
         "--max-epochs",
@@ -518,6 +541,9 @@ def main():
         optimizer_type=args.optimizer,
         onset_weight=args.onset_weight,
         frame_weight=args.frame_weight,
+        onset_loss_weight=args.onset_loss_weight,
+        frame_loss_weight=args.frame_loss_weight,
+        contour_loss_weight=args.contour_loss_weight,
         media_log_interval_steps=args.media_log_interval_steps,
     )
 

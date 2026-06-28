@@ -14,6 +14,14 @@ set dotenv-load := true
 config := "evals/fixtures/smoke.yaml"
 manifest := "out/smoke/manifest.jsonl"
 
+# Offset relabeling toggle for `train` (off by default). `just` recipe parameters can't be set by
+# name, so this is a variable: enable with `RELABEL=1 just train` (env) or `just RELABEL=1 train`.
+RELABEL := env_var_or_default("RELABEL", "0")
+
+# Frame-head positive-class weight for `train` and `train-synthetic`. Sweep with e.g.
+# `FRAME_WEIGHT=8 just train-synthetic`. Set FRAME_WEIGHT=2 for the old (collapsed-frame) behaviour.
+FRAME_WEIGHT := env_var_or_default("FRAME_WEIGHT", "16")
+
 # List available actions.
 default:
     @just --list
@@ -128,10 +136,28 @@ klangio-fifth N SHARDS="6": setup
 # is kept as a cheap label/timbre anchor, alongside the full scat (lyrics_pool), real-word
 # (lyrics_pool_words), and any rendered Klangio fifths. Absent run ids are skipped, so the fifths
 # join automatically as each `just klangio-fifth N` completes. Use `donor_pool` (no cap) for all of it.
+# Enable offset relabeling with `RELABEL=1 just train` (env) or `just RELABEL=1 train` — NOT
+# `just train RELABEL=1` (that would be read as the RUN_IDS argument). It re-derives each sample's
+# onset/offset labels from its own audio during staging: the datasets are rendered force_score_f0
+# (labels on the rigid score grid) but the SVS audio sings with its own micro-timing, so ~39% of
+# offsets sit >50 ms off the real voicing end. A re-derived label is kept only when it passes
+# validation against the audio, else the original score label is staged unchanged (repair-only).
+# Adds an f0 pass per sample, so staging is slower.
 train RUN_IDS="donor_pool:40 lyrics_pool lyrics_pool_words klangio_fifth_0 klangio_fifth_1 klangio_fifth_2 klangio_fifth_3 klangio_fifth_4":
     uv sync --extra cpu --extra gpu --extra training
-    uv run --extra cpu python evals/corpus_archive.py stage --clean --run-ids {{RUN_IDS}} --out syntheticdataset_soulx
-    bash training/train_soulx.sh
+    uv run --extra cpu --extra gpu python evals/corpus_archive.py stage --clean --run-ids {{RUN_IDS}} --out syntheticdataset_soulx {{ if RELABEL == "1" { "--relabel-offsets" } else { "" } }}
+    FRAME_WEIGHT={{FRAME_WEIGHT}} bash training/train_soulx.sh
+
+# Synthetic-only A/B: train on the hand-made synthetic sequences (donor_pool + its augmentations, and
+# the other authored-score pools), IGNORING the Klangio-transcribed training renders (klangio_fifth_*)
+# entirely — validation still runs on the held-out Klangio set under external/. Stages into its OWN
+# dir (syntheticdataset_synth), so it never clobbers a running `just train`. RELABEL=1 works here too,
+# though donor_pool is the deterministic lane (exact labels) so it has nothing to repair. Use
+# RUN_IDS="donor_pool" for the exact-label deterministic data only.
+train-synthetic RUN_IDS="donor_pool lyrics_pool lyrics_pool_words melody_pool":
+    uv sync --extra cpu --extra gpu --extra training
+    uv run --extra cpu --extra gpu python evals/corpus_archive.py stage --clean --run-ids {{RUN_IDS}} --out syntheticdataset_synth {{ if RELABEL == "1" { "--relabel-offsets" } else { "" } }}
+    FRAME_WEIGHT={{FRAME_WEIGHT}} bash training/train_synthetic.sh
 
 # Run the full test suite.
 test: setup

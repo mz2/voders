@@ -87,7 +87,51 @@ def unpack(archive: Path, run_dir: Path) -> int:
     return 0
 
 
-def stage(run_ids: list[str], out_dir: Path, *, clean: bool = False) -> int:
+def _make_relabeler(device: str):
+    """Return a ``(audio, sr, tsv_path) -> bool`` that REPAIRS only labels the audio contradicts.
+
+    Labels that already validate against the audio are left untouched — the deterministic lane's
+    exact labels and any on-grid SVS sample stay byte-for-byte, so relabeling never injects f0
+    measurement noise into already-correct data. Only when the original label fails validation is
+    the audio-derived label tried, and written solely if it too passes (else the original is kept).
+    Heavy validation deps import here so plain (non-relabel) staging never pays for them.
+    """
+    from voders.config.models import ValidatorConfig
+    from voders.manifest.models import VerdictStatus
+    from voders.scores.parse import parse_tsv, serialize_score
+    from voders.validate.f0_align import align_score_to_f0
+    from voders.validate.validator import Validator, _measure_f0
+
+    def _relabel(audio, sr: int, tsv_path: Path) -> bool:
+        mono = audio if audio.ndim == 1 else audio.mean(axis=1)
+        score = parse_tsv(tsv_path).score
+        if not score.notes:
+            return False
+        # The f0 pass dominates cost; measure ONCE and reuse it for the original-label check, the
+        # alignment, and the re-derived-label check (up to 3 f0 passes -> 1).
+        meas = _measure_f0(mono.astype(float), sr, 0.0, device=device)
+        validator = Validator(ValidatorConfig(), sr=sr)
+        if validator.validate(mono, score, meas=meas).status == VerdictStatus.ACCEPTED:
+            return False  # original label already matches the audio — leave it exact
+        rederived, _onset_drift, _offset_drift = align_score_to_f0(
+            mono, score, sr=sr, device=device, meas=meas
+        )
+        if validator.validate(mono, rederived, meas=meas).status == VerdictStatus.ACCEPTED:
+            tsv_path.write_bytes(serialize_score(rederived))
+            return True
+        return False
+
+    return _relabel
+
+
+def stage(
+    run_ids: list[str],
+    out_dir: Path,
+    *,
+    clean: bool = False,
+    relabel_offsets: bool = False,
+    relabel_device: str = "auto",
+) -> int:
     """Assemble the trainer's flat input dir from committed datasets (OGG -> WAV).
 
     ``SyntheticDataset`` reads ``<out_dir>/<song>/{audio.wav,score.tsv}``, so every accepted sample
@@ -95,14 +139,32 @@ def stage(run_ids: list[str], out_dir: Path, *, clean: bool = False) -> int:
     several run ids to combine corpora (e.g. the deterministic ``donor_pool`` AND the lyric/SVS
     ``lyrics_pool``) into one training set. ``clean`` rebuilds ``out_dir`` from scratch so the
     staged set is exactly ``run_ids`` (no stale samples from a previous run).
+
+    ``relabel_offsets`` REPAIRS labels the audio contradicts: the datasets are rendered
+    ``force_score_f0`` (labels on the rigid score grid), but the SVS sings with its own timing.
+    A label that already validates against its audio is kept byte-for-byte; only one that fails is
+    replaced by an audio-derived label, and only if that re-derivation itself validates. No sample
+    is lost, and already-correct labels (deterministic lane, on-grid SVS) are never disturbed.
     """
     if clean and out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Phase 1 — stage every sample (fast OGG->WAV copy). This always produces a COMPLETE corpus, so
+    # the (slow, optional) relabel in phase 2 can be interrupted without ever shrinking the training
+    # set — the worst case is simply fewer labels repaired.
     total = 0
+    staged: list[Path] = []
     for spec in run_ids:
         rid, _, cap = spec.partition(":")  # "donor_pool:100" caps that dataset to 100 songs
         limit = int(cap) if cap else None
+        if "=" in rid:  # e.g. someone ran `just train RELABEL=1` (RELABEL=1 lands here as a run id)
+            print(
+                f"skip {rid!r}: looks like a variable assignment, not a dataset. To toggle "
+                "relabeling use `RELABEL=1 just train` or `just RELABEL=1 train`.",
+                file=sys.stderr,
+            )
+            continue
         arc_corpus = REPO / "datasets" / rid / "corpus"
         if not arc_corpus.is_dir():
             print(f"skip {rid}: no archive at {arc_corpus}", file=sys.stderr)
@@ -119,10 +181,41 @@ def stage(run_ids: list[str], out_dir: Path, *, clean: bool = False) -> int:
             tsv = ogg.parent / "score.tsv"
             if tsv.exists():
                 shutil.copy2(tsv, dest / "score.tsv")
+            staged.append(dest)
             n += 1
             total += 1
         print(f"staged {n} songs from {rid}" + (f" (capped at {limit})" if limit else ""))
     print(f"staged {total} songs -> {out_dir}")
+
+    # Phase 2 — optional in-place label repair from the staged audio. Runs only after the corpus is
+    # fully staged, so a Ctrl-C / crash here leaves the corpus complete (just fewer labels fixed).
+    if relabel_offsets and total:
+        relabel = _make_relabeler(relabel_device)
+        relabelled = relabel_failed = 0
+        for i, dest in enumerate(staged, 1):
+            tsv = dest / "score.tsv"
+            if not tsv.exists():
+                continue
+            try:
+                audio, sr = sf.read(dest / "audio.wav", dtype="float32")
+                if relabel(audio, sr, tsv):
+                    relabelled += 1
+            except Exception as exc:  # noqa: BLE001 — keep the original label, carry on
+                relabel_failed += 1
+                if relabel_failed <= 10:
+                    print(
+                        f"  relabel failed for {dest.name}: {exc!r} — kept score label",
+                        file=sys.stderr,
+                    )
+            if i % 500 == 0:
+                print(
+                    f"  ...relabel {i}/{len(staged)} (fixed {relabelled}, failed {relabel_failed})"
+                )
+        print(
+            f"repaired labels from audio for {relabelled}/{len(staged)} songs "
+            f"({relabel_failed} errors kept score label; rest already matched the audio)"
+        )
+
     if total == 0:
         print(
             f"ERROR: staged 0 songs — none of {run_ids} resolved under datasets/. "
@@ -151,10 +244,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--clean", action="store_true", help="rebuild the staging dir from scratch (stage mode)"
     )
+    parser.add_argument(
+        "--relabel-offsets",
+        action="store_true",
+        help="re-derive onset/offset labels from each sample's audio during staging, keeping the "
+        "re-derived label only when it passes validation (else the original score label). Fixes "
+        "force_score_f0 label drift; adds an f0 pass per sample (stage mode)",
+    )
+    parser.add_argument(
+        "--relabel-device",
+        default="auto",
+        help="f0 device for --relabel-offsets (auto uses CREPE/GPU when available, else pyin/CPU)",
+    )
     args = parser.parse_args(argv)
 
     if args.mode == "stage":
-        return stage(args.run_ids, Path(args.out), clean=args.clean)
+        return stage(
+            args.run_ids,
+            Path(args.out),
+            clean=args.clean,
+            relabel_offsets=args.relabel_offsets,
+            relabel_device=args.relabel_device,
+        )
 
     run_dir = Path(args.run_dir) if args.run_dir else REPO / "out" / args.run_id
     archive = Path(args.archive) if args.archive else REPO / "datasets" / args.run_id
