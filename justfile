@@ -18,7 +18,8 @@ manifest := "out/smoke/manifest.jsonl"
 # name, so this is a variable: enable with `RELABEL=1 just train` (env) or `just RELABEL=1 train`.
 RELABEL := env_var_or_default("RELABEL", "0")
 
-# Frame-head positive-class weight for `train-synthetic`. Sweep with `FRAME_WEIGHT=8 just train-synthetic`.
+# Frame-head positive-class weight for `train` and `train-synthetic`. Sweep with e.g.
+# `FRAME_WEIGHT=8 just train-synthetic`. Set FRAME_WEIGHT=2 for the old (collapsed-frame) behaviour.
 FRAME_WEIGHT := env_var_or_default("FRAME_WEIGHT", "16")
 
 # List available actions.
@@ -145,7 +146,7 @@ klangio-fifth N SHARDS="6": setup
 train RUN_IDS="donor_pool:40 lyrics_pool lyrics_pool_words klangio_fifth_0 klangio_fifth_1 klangio_fifth_2 klangio_fifth_3 klangio_fifth_4":
     uv sync --extra cpu --extra gpu --extra training
     uv run --extra cpu --extra gpu python evals/corpus_archive.py stage --clean --run-ids {{RUN_IDS}} --out syntheticdataset_soulx {{ if RELABEL == "1" { "--relabel-offsets" } else { "" } }}
-    bash training/train_soulx.sh
+    FRAME_WEIGHT={{FRAME_WEIGHT}} bash training/train_soulx.sh
 
 # Synthetic-only A/B: train on the hand-made synthetic sequences (donor_pool + its augmentations, and
 # the other authored-score pools), IGNORING the Klangio-transcribed training renders (klangio_fifth_*)
