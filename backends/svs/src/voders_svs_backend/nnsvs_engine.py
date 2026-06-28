@@ -269,7 +269,14 @@ def align_and_pitchlock(
                 idx = np.clip(
                     np.round(np.linspace(0, sp.shape[0] - 1, n_tgt)).astype(int), 0, sp.shape[0] - 1
                 )
-                f0_tgt = np.full(n_tgt, _midi_to_hz(int(pitch)), dtype=np.float64)
+                # A tiny bit of vibrato around the score pitch (fading in after the attack) so the
+                # audio isn't dead-flat — closer to real singing for the transcriber to generalise.
+                # The LABEL stays the exact score pitch: vibrato is centred on it and its ~18-cent
+                # peak stays under the validator's 25-cent f0 tolerance, so coverage isn't hurt.
+                tt = np.arange(n_tgt) * (frame_period / 1000.0)
+                vib_gain = np.clip(tt / 0.12, 0.0, 1.0)  # fade in over ~120 ms
+                vib_cents = 18.0 * vib_gain * np.sin(2.0 * np.pi * 5.5 * tt)
+                f0_tgt = _midi_to_hz(int(pitch)) * (2.0 ** (vib_cents / 1200.0))
                 note_audio = pyworld.synthesize(f0_tgt, sp[idx], ap[idx], sr, frame_period)
         if note_audio is None or note_audio.size == 0 or float(np.max(np.abs(note_audio))) < 1e-4:
             note_audio = _tone(int(pitch), n_samp, sr)  # fallback: in-tune tone at the score pitch
