@@ -4,6 +4,8 @@ A factory for singing-transcription training data, plus the model trained on it.
 
 For the end-to-end ACE-Opencpop score → SoulX audio → MML26 training workflow, see
 [Generate a SoulX synthetic singing dataset from ACE-Opencpop](docs/soulx-ace-opencpop.md).
+That path uses the dedicated ACE→SoulX workflow documented there, not the older generic
+`SoulX-Singer` lane summarised below.
 
 `voders` turns folders of singing scores into a training corpus of `(audio.wav, score.tsv)`
 pairs whose labels are **correct by construction**. Each score is a list of
@@ -31,7 +33,7 @@ flowchart LR
         B3["ACE-Step (accompaniment)"]
     end
     subgraph TR["Training"]
-        MODEL["Basic Pitch+ model"] --> EVAL["eval note-F1<br/>COn · COnP · COnOff · COnPOff<br/>val = Klangio (external/ submodule)"] --> WB["Weights & Biases"]
+        MODEL["Basic Pitch+ model"] --> EVAL["eval note-F1<br/>COn · COnP · COnOff · COnPOff<br/>val = Klangio (external/submodule)"] --> WB["Weights & Biases"]
     end
     SRC["scores · donor voices · lyrics"] --> ORCH
     ORCH <-->|"JSON request / WAV"| BK
