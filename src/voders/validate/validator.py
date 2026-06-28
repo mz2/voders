@@ -162,6 +162,7 @@ class Validator:
         snr_db: float | None = None,
         f0_method: str | None = None,
         f0_device: str | None = None,
+        meas: _Measurement | None = None,
     ) -> ValidationVerdict:
         reasons: list[str] = []
         if label_score.is_empty:
@@ -174,8 +175,14 @@ class Validator:
         peak = float(np.max(np.abs(audio))) if audio.size else 0.0
         clipping = peak > 1.0 + 1e-6
 
-        group_delay = self.timing.total_active_group_delay_ms()
-        meas = _measure_f0(audio.astype(float), self.sr, group_delay, method=method, device=device)
+        # ``meas`` lets a caller that already measured this audio's f0 (group-delay 0) reuse it
+        # instead of paying the f0 pass again — the dominant cost when validating + re-deriving the
+        # same clip back-to-back (relabeling). Only valid when no group delay applies.
+        if meas is None:
+            group_delay = self.timing.total_active_group_delay_ms()
+            meas = _measure_f0(
+                audio.astype(float), self.sr, group_delay, method=method, device=device
+            )
 
         onset_ok = True
         offset_ok = True
@@ -210,9 +217,9 @@ class Validator:
             # not in-tune (where this note's voicing actually ends). Using a falling edge (not just
             # the last in-tune frame) stops the next note's audio bleeding into this note's measured
             # offset. The search window is widened to at least the offset tolerance (a >750 ms note
-            # has a tolerance >150 ms, so the old fixed ±win could miss a within-tolerance offset and
-            # falsely reject) and capped at the next note's onset so a same-pitch successor can't
-            # extend it. Fall back to the last in-tune frame when there is no falling edge (legato).
+            # has a tolerance >150 ms, so the old fixed ±win could miss a within-tolerance offset
+            # and falsely reject) and capped at the next note's onset so a same-pitch successor
+            # can't extend it. Fall back to the last in-tune frame when there's no falling edge.
             off_win = max(win, self._offset_tol_ms(note.duration_ms) / 1000.0)
             next_onset = notes[idx + 1].onset_s if idx + 1 < len(notes) else float("inf")
             off_lo = note.offset_s - off_win

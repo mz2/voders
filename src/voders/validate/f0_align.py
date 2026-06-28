@@ -20,7 +20,7 @@ _TIMING_WEIGHT = 6.0  # pitch-cost units (≈ semitones) per second a frame sits
 
 
 def align_score_to_f0(
-    audio: np.ndarray, score: Score, *, sr: int = SAMPLE_RATE, device: str = "auto"
+    audio: np.ndarray, score: Score, *, sr: int = SAMPLE_RATE, device: str = "auto", meas=None
 ) -> tuple[Score, float, float]:
     """Return ``(rederived_score, max_onset_dev_ms, max_offset_dev_ms)`` aligning ``score`` to the
     audio's f0.
@@ -29,6 +29,10 @@ def align_score_to_f0(
     monotonic DTW so consecutive same-or-different-pitch notes are separated by their pitch contour.
     The two deviations report how far the *sung* onset/offset drifted from the source score (the
     re-derived labels match the audio by construction, so these are provenance, not a gate).
+
+    ``meas`` is an already-computed ``_measure_f0`` result (group-delay 0). Pass it to skip the f0
+    pass when the caller also validates the same audio — the dominant cost — and reuse one
+    measurement across align + validate (see ``relabel_score``).
     """
     from voders.validate.validator import _measure_f0
 
@@ -36,7 +40,8 @@ def align_score_to_f0(
     if not notes or audio.size == 0:
         return score, 0.0, 0.0
 
-    meas = _measure_f0(audio, sr, 0.0, device=device)
+    if meas is None:
+        meas = _measure_f0(audio, sr, 0.0, device=device)
     times = np.asarray(meas.times, dtype=np.float64)
     f0 = np.asarray(meas.f0, dtype=np.float64)
     m = times.size
@@ -173,11 +178,14 @@ def relabel_score(
     and the staging-time relabel in ``just train``.
     """
     from voders.config.models import ValidatorConfig
-    from voders.validate.validator import Validator
+    from voders.validate.validator import Validator, _measure_f0
 
+    # Measure f0 ONCE and reuse it for both the alignment and the validation — the f0 pass dominates
+    # the cost, so sharing it roughly halves the per-sample time.
+    meas = _measure_f0(audio.astype(float), sr, 0.0, device=device)
     rederived, onset_drift_ms, offset_drift_ms = align_score_to_f0(
-        audio, score, sr=sr, device=device
+        audio, score, sr=sr, device=device, meas=meas
     )
     validator = validator or Validator(ValidatorConfig(), sr=sr)
-    verdict = validator.validate(audio, rederived, f0_device=device)
+    verdict = validator.validate(audio, rederived, meas=meas)
     return rederived, verdict, onset_drift_ms, offset_drift_ms

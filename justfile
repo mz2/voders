@@ -141,7 +141,7 @@ klangio-fifth N SHARDS="6": setup
 # Adds an f0 pass per sample, so staging is slower.
 train RUN_IDS="donor_pool:40 lyrics_pool lyrics_pool_words klangio_fifth_0 klangio_fifth_1 klangio_fifth_2 klangio_fifth_3 klangio_fifth_4":
     uv sync --extra cpu --extra gpu --extra training
-    uv run --extra cpu python evals/corpus_archive.py stage --clean --run-ids {{RUN_IDS}} --out syntheticdataset_soulx {{ if RELABEL == "1" { "--relabel-offsets" } else { "" } }}
+    uv run --extra cpu --extra gpu python evals/corpus_archive.py stage --clean --run-ids {{RUN_IDS}} --out syntheticdataset_soulx {{ if RELABEL == "1" { "--relabel-offsets" } else { "" } }}
     bash training/train_soulx.sh
 
 # Run the full test suite.
