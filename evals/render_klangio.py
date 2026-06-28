@@ -75,7 +75,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--src", default="evals/fixtures/scores_klangio")
     ap.add_argument("--of", type=int, default=1, help="split the phrases into this many slices")
     ap.add_argument("--part", type=int, default=0, help="which slice (0..of-1) to render")
-    ap.add_argument("--shards", type=int, default=6, help="parallel resident-model processes")
+    ap.add_argument("--shards", type=int, default=6, help="max concurrent render processes")
+    ap.add_argument(
+        "--chunk-size", type=int, default=150,
+        help="phrases per render process; a fresh process per chunk caps the core's per-sample "
+        "memory growth (it leaks ~50 MB/sample, so one long process OOMs)",
+    )
     ap.add_argument("--limit", type=int, default=0, help="cap phrases (testing)")
     ap.add_argument("--run-id", default="", help="output run id (default klangio_fifth_<part>)")
     args = ap.parse_args(argv)
@@ -93,44 +98,52 @@ def main(argv: list[str] | None = None) -> int:
     )
     sidecar = src / "_source.json"
 
-    work = REPO / "out" / f"{run_id}_shards"
+    work = REPO / "out" / f"{run_id}_work"
     if work.exists():
         shutil.rmtree(work)
     work.mkdir(parents=True)
-    env = {**os.environ, "VODERS_SVS_PERSISTENT": "1"}  # one resident model per shard, no reload
+    env = {**os.environ, "VODERS_SVS_PERSISTENT": "1"}  # model resident within each chunk process
 
-    procs, shard_outs = [], []
-    for k in range(args.shards):
-        shard = work / f"shard{k}"
-        shard.mkdir()
-        for f in files[k :: args.shards]:
-            (shard / f.name).symlink_to(f)
+    # One render PROCESS per chunk of phrases (fresh process => the core's per-sample leak is freed
+    # when it exits). A pool keeps up to --shards running at once. Voice rotates per chunk.
+    chunks = [files[i : i + args.chunk_size] for i in range(0, len(files), args.chunk_size)]
+    specs, chunk_outs = [], []
+    for ci, chunk in enumerate(chunks):
+        cdir = work / f"chunk{ci}"
+        cdir.mkdir()
+        for f in chunk:
+            (cdir / f.name).symlink_to(f)
         if sidecar.exists():
-            (shard / "_source.json").write_text(sidecar.read_text(encoding="utf-8"))
-        vid, vref = _VOICES[k % len(_VOICES)]
-        out = REPO / "out" / f"{run_id}_shard{k}"
-        shard_outs.append(out)
-        cfg = shard / "config.yaml"
+            (cdir / "_source.json").write_text(sidecar.read_text(encoding="utf-8"))
+        vid, vref = _VOICES[ci % len(_VOICES)]
+        out = REPO / "out" / f"{run_id}_chunk{ci}"
+        chunk_outs.append(out)
+        cfg = cdir / "config.yaml"
         cfg.write_text(
-            _CONFIG.format(run_id=run_id, k=k, seed=1000 + k, shard_dir=shard, out=out,
+            _CONFIG.format(run_id=f"{run_id}_c{ci}", k=ci, seed=1000 + ci, shard_dir=cdir, out=out,
                            vid=vid, vref=vref),
             encoding="utf-8",
         )
-        procs.append(subprocess.Popen(
-            ["uv", "run", "--extra", "cpu", "--extra", "lyrics", "--extra", "gpu",
-             "voders", "run", "--config", str(cfg)],
-            cwd=REPO, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        ))
-    print(f"launched {len(procs)} persistent shards over {len(files)} phrases "
-          f"(slice {args.part}/{args.of})")
+        specs.append(cfg)
 
+    print(f"{len(chunks)} chunks of <= {args.chunk_size} over {len(files)} phrases, "
+          f"<= {args.shards} concurrent (slice {args.part}/{args.of})")
     start = time.monotonic()
-    for proc in procs:
-        proc.wait()
+    queue, running = list(specs), []
+    while queue or running:
+        while queue and len(running) < args.shards:
+            cfg = queue.pop(0)
+            running.append(subprocess.Popen(
+                ["uv", "run", "--extra", "cpu", "--extra", "lyrics", "--extra", "gpu",
+                 "voders", "run", "--config", str(cfg)],
+                cwd=REPO, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            ))
+        time.sleep(2)
+        running = [p for p in running if p.poll() is None]
     elapsed = time.monotonic() - start
 
-    run_dir, accepted = _merge(run_id, shard_outs)
-    for out in shard_outs:  # tidy per-shard dirs once merged
+    run_dir, accepted = _merge(run_id, chunk_outs)
+    for out in chunk_outs:
         shutil.rmtree(out, ignore_errors=True)
     shutil.rmtree(work, ignore_errors=True)
     rate = len(files) / elapsed if elapsed else 0
