@@ -165,11 +165,15 @@ class SvsLane:
         audio = self._render_audio(req, req.score, backend)
         # F0-based alignment (not RMS): legato singing has no energy gaps, so onsets come from the
         # pitch contour the validator itself reads.
-        rederived, max_dev_ms = align_score_to_f0(audio, req.score)
+        rederived, max_dev_ms, max_offset_dev_ms = align_score_to_f0(audio, req.score)
         notes: dict[str, object] = {
             "mode": "rederive",
             "backend": backend,
-            "max_onset_dev_ms": max_dev_ms,  # how far the sung timing drifted from the source score
+            # How far the sung onset/offset drifted from the source score. The re-derived labels
+            # match the audio by construction, so these are recorded as provenance (offsets are no
+            # longer pinned to the next onset, so their drift is now meaningful and observable).
+            "max_onset_dev_ms": max_dev_ms,
+            "max_offset_dev_ms": max_offset_dev_ms,
         }
         if self._articulated(req, backend):
             notes["lyric_articulated"] = True

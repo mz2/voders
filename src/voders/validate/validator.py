@@ -184,7 +184,8 @@ class Validator:
         short_notes: list[int] = []
 
         win = max(0.15, 3.0 * self.cfg.onset_ms / 1000.0)
-        for idx, note in enumerate(label_score.notes):
+        notes = label_score.notes
+        for idx, note in enumerate(notes):
             if note.duration_ms + 1e-6 < self.min_note_ms:
                 short_notes.append(idx)
 
@@ -198,14 +199,30 @@ class Validator:
             # previous note's still-in-tune audio inside the ±win window is mistaken for this onset.
             # Pure legato with no re-articulation has no edge, so fall back to any in-tune frame.
             on_lo, on_hi = note.onset_s - win, note.onset_s + win
-            off_lo, off_hi = note.offset_s - win, note.offset_s + win
             rising = np.zeros_like(in_tune)
             rising[1:] = in_tune[1:] & ~in_tune[:-1]
             in_on_win = (meas.times >= on_lo) & (meas.times <= on_hi)
             on_idx = np.where(rising & in_on_win)[0]
             if on_idx.size == 0:
                 on_idx = np.where(in_tune & in_on_win)[0]
-            off_idx = np.where(in_tune & (meas.times >= off_lo) & (meas.times <= off_hi))[0]
+
+            # Offset: mirror the onset with a *falling edge* — an in-tune frame whose successor is
+            # not in-tune (where this note's voicing actually ends). Using a falling edge (not just
+            # the last in-tune frame) stops the next note's audio bleeding into this note's measured
+            # offset. The search window is widened to at least the offset tolerance (a >750 ms note
+            # has a tolerance >150 ms, so the old fixed ±win could miss a within-tolerance offset and
+            # falsely reject) and capped at the next note's onset so a same-pitch successor can't
+            # extend it. Fall back to the last in-tune frame when there is no falling edge (legato).
+            off_win = max(win, self._offset_tol_ms(note.duration_ms) / 1000.0)
+            next_onset = notes[idx + 1].onset_s if idx + 1 < len(notes) else float("inf")
+            off_lo = note.offset_s - off_win
+            off_hi = min(note.offset_s + off_win, next_onset)
+            falling = np.zeros_like(in_tune)
+            falling[:-1] = in_tune[:-1] & ~in_tune[1:]
+            in_off_win = (meas.times >= off_lo) & (meas.times <= off_hi)
+            off_idx = np.where(falling & in_off_win)[0]
+            if off_idx.size == 0:
+                off_idx = np.where(in_tune & in_off_win)[0]
 
             if on_idx.size == 0:
                 onset_ok = False

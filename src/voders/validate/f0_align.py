@@ -20,17 +20,20 @@ _UNVOICED_COST = 1e3  # cost of assigning a note onset to an unvoiced / wrong-pi
 
 def align_score_to_f0(
     audio: np.ndarray, score: Score, *, sr: int = SAMPLE_RATE, device: str = "auto"
-) -> tuple[Score, float]:
-    """Return ``(rederived_score, max_onset_dev_ms)`` aligning ``score`` to the audio's f0.
+) -> tuple[Score, float, float]:
+    """Return ``(rederived_score, max_onset_dev_ms, max_offset_dev_ms)`` aligning ``score`` to the
+    audio's f0.
 
     Pitches are the score's (the backend sang them); onsets/offsets are detected from the f0 by a
     monotonic DTW so consecutive same-or-different-pitch notes are separated by their pitch contour.
+    The two deviations report how far the *sung* onset/offset drifted from the source score (the
+    re-derived labels match the audio by construction, so these are provenance, not a gate).
     """
     from voders.validate.validator import _measure_f0
 
     notes = score.notes
     if not notes or audio.size == 0:
-        return score, 0.0
+        return score, 0.0, 0.0
 
     meas = _measure_f0(audio, sr, 0.0, device=device)
     times = np.asarray(meas.times, dtype=np.float64)
@@ -38,7 +41,7 @@ def align_score_to_f0(
     m = times.size
     n = len(notes)
     if m < n:  # too few frames to resolve every note — keep the score as-is
-        return score, 0.0
+        return score, 0.0, 0.0
 
     frame_midi = np.full(m, np.nan)
     voiced = np.isfinite(f0) & (f0 > 0)
@@ -99,6 +102,7 @@ def align_score_to_f0(
 
     rederived: list[Note] = []
     max_dev_ms = 0.0
+    max_offset_dev_ms = 0.0
     for i, note in enumerate(notes):
         onset = float(times[onset_frame[i]])  # type: ignore[index]
         # Offset = the end of THIS note's own voicing (one frame past its last voiced on-pitch
@@ -121,5 +125,10 @@ def align_score_to_f0(
         rederived.append(Note(onset_s=round(onset, 3), offset_s=round(offset, 3),
                               pitch_midi=note.pitch_midi))
         max_dev_ms = max(max_dev_ms, abs(onset - note.onset_s) * 1000.0)
+        max_offset_dev_ms = max(max_offset_dev_ms, abs(offset - note.offset_s) * 1000.0)
 
-    return Score(score_id=score.score_id, source=score.source, notes=rederived), max_dev_ms
+    return (
+        Score(score_id=score.score_id, source=score.source, notes=rederived),
+        max_dev_ms,
+        max_offset_dev_ms,
+    )
