@@ -1,5 +1,7 @@
 # voders
 
+A factory for singing-transcription training data, plus the model trained on it.
+
 For the end-to-end ACE-Opencpop score → SoulX audio → MML26 training workflow, see
 [Generate a SoulX synthetic singing dataset from ACE-Opencpop](docs/soulx-ace-opencpop.md).
 
@@ -10,21 +12,35 @@ keeps the score as the ground-truth label, so the label never has to be guessed 
 audio. An alignment validator gates every sample, and a JSON Lines manifest records full
 provenance (which voice, seed, license, and config produced each pair) for replay and audit.
 
-The intended consumer is a transcription model that ingests 22,050 Hz mono float32 audio, so
-every rendered sample uses that format.
+- **What** — turns folders of note scores (`onset_s  offset_s  pitch_midi` TSV rows) into `(audio.wav, score.tsv)` pairs.
+- **Why** — labels are **correct by construction**: audio is rendered *from* the score, so onset/offset/pitch are never guessed back from audio (alignment drift is the dominant risk, not audio realism).
+- **Guarantees** — an alignment validator gates every sample; a JSONL manifest records full provenance (voice, seed, license, config) for replay/audit. Audio is 22,050 Hz mono float32.
 
-## Purpose in one paragraph
+## Architecture
 
-Training a singing-transcription model needs lots of `(audio, note-labels)` pairs, and the hard
-part is **label accuracy**: if a note's onset in the label doesn't match the audio, the model
-learns from wrong data. The dominant risk is *alignment drift*, not audio realism. voders removes
-that risk by generating the audio **from** the labels — pitch and timing are taken straight from
-the score, so the labels are correct by construction — then **gates every sample** through an
-alignment validator and records full **provenance** (voice, seed, license, config) so any sample is
-auditable and reproducible. The result is a large, in-the-mix, license-clean synthetic corpus a
-transcription model can train on with confidence.
+Two halves — a CPU **corpus factory** and the **training** that consumes its output — with neural synthesis isolated in separate processes.
 
-## How it works
+```mermaid
+flowchart LR
+    subgraph FACT["Corpus factory — uv · Python 3.14 · CPU core"]
+        ORCH["orchestrator → render lanes → alignment validator"]
+    end
+    subgraph BK["Out-of-process backends — own uv projects"]
+        B1["nnsvs · SoulX-Singer (svs)"]
+        B2["RVC · Seed-VC (voice conversion)"]
+        B3["ACE-Step (accompaniment)"]
+    end
+    subgraph TR["Training"]
+        MODEL["Basic Pitch+ model"] --> EVAL["eval note-F1<br/>COn · COnP · COnOff · COnPOff<br/>val = Klangio (external/ submodule)"] --> WB["Weights & Biases"]
+    end
+    SRC["scores · donor voices · lyrics"] --> ORCH
+    ORCH <-->|"JSON request / WAV"| BK
+    ORCH --> OUT[("out/ — corpus + rejected + manifest")]
+    OUT -->|"pack · OGG · Git LFS"| DS[("datasets/ — committed archive")]
+    DS -->|"stage (+ optional relabel)"| MODEL
+```
+
+## Pipeline
 
 ```mermaid
 flowchart LR
@@ -42,355 +58,216 @@ flowchart LR
     G --> M[("manifest.jsonl<br/>provenance + verdict")]
 ```
 
-One declarative YAML config plus a single `master_seed` fully specify a run; the manifest hashes
-the resolved config so a corpus replays from `manifest + scores` alone.
+- One declarative YAML config + one `master_seed` fully specify a run; the manifest hashes the resolved config so a corpus replays from `manifest + scores` alone.
+- Every per-sample seed derives from `master_seed`, so any one sample reproduces in isolation. Deterministic/VC lanes are bit-exact; neural lanes reproduce to within validator tolerances.
 
-## The four renderer lanes
+## Renderer lanes
 
-Each lane is enabled or disabled independently in the run config:
+Each lane is toggled independently in the run config. None of these aim for realistic singing — the point is exact labels.
 
-1. **deterministic** — drives the pitch directly from the score with the WORLD vocoder (a classic
-   analysis/resynthesis vocoder that lets us replace a donor voice's pitch with a score-derived
-   contour). This is the load-bearing CPU baseline: f0 (the fundamental frequency, i.e. the sung
-   pitch) comes straight from the label, so alignment is exact.
-2. **voice_conversion** — keeps the score-accurate timing and pitch but converts the timbre toward
-   a target singer, for variety in voice identity.
-3. **svs** — expressive neural singing-voice synthesis (SVS), which sings the score with natural
-   phrasing; labels are re-derived and re-validated so expressive timing stays within tolerance.
-4. **augmentation** — label-preserving production-style effects (noise, room, codec) applied to an
-   accepted base render, multiplying the corpus without changing the score.
+- **deterministic (WORLD)** — replaces a donor vowel's pitch with the score's f0. Produces a sustained vowel at exact pitch/timing; it sounds synthetic, not like a real singer. Value is label exactness, not realism. CPU, no GPU.
+- **voice_conversion (RVC / Seed-VC)** — keeps score pitch/timing, swaps timbre toward a target singer. Changes voice identity only. RVC needs a trained `.pth`; Seed-VC is zero-shot from a reference clip. GPU.
+- **svs (nnsvs / SoulX-Singer)** — neural voicebanks that sing the score with lyrics; more natural than WORLD but still recognisably synthetic, and tied to a specific voicebank. In `force_score_f0` mode the sung timing drifts from the rigid score grid, so labels are re-derived from the audio (`rederive`) and re-validated. GPU. (SoulX is wired but largely unusable — see [What didn't work](#what-didnt-work).)
+- **augmentation** — label-preserving effects (`room_reverb`, `phone_codec`, `noisy_codec`) on an accepted render; audio only, labels untouched.
 
-The deterministic lane and validator run on a laptop CPU with no GPU. The neural lanes
-(`svs`, `voice_conversion`) use the `gpu` extra.
+## Synthesis methods (attempted)
 
-## Optional lyrics (phonetic diversity)
+Every voicing engine tried, with honest status:
 
-Lyrics are **opt-in** and exist only to add phonetic variety (consonants, vowel transitions) the
-single open vowel "ah" lacks — they are never a corpus label. With no `lyrics` block a run is
-byte-identical to the lyric-free pipeline. Add a `lyrics` block to a run config to pick a source:
+| Method | Lane | What it is | Status |
+|---|---|---|---|
+| **WORLD** | deterministic | analysis/resynthesis vocoder; swaps a donor vowel's f0 for the score's → sustained vowel at exact pitch/timing | **Primary** — synthetic sound, exact labels, CPU baseline |
+| **nnsvs** | svs | neural SVS voicebank singing the score + lyrics | **Used** — natural-ish; `force_score_f0` labels drift → `rederive` |
+| **RVC** | voice_conversion | timbre conversion to a trained target singer (`.pth`), pitch preserved | Used — voice variety; needs consented weights |
+| **Seed-VC** | voice_conversion | zero-shot timbre conversion from a reference clip, pitch preserved | Used (demo) — no per-voice training |
+| **SoulX-Singer** | svs | zero-shot SVS in a reference timbre | **Failed** — sings too freely (~330 ms drift); labels don't validate; not used |
+| **Vocos** | deterministic (exp) | neural re-vocode of the WORLD output | **Failed** — not f0-conditioned; detunes past ±25 cents; gate rejects it |
+| **ACE-Step** | accompaniment | generates instrumental backing (not vocals) | Used (GPU) — optional accompaniment stage |
+
+## Alignment validator (how labels are checked)
+
+Every sample is gated by measuring the rendered audio's pitch (`pyin` on CPU, `CREPE` on GPU) and checking each note against its score label, after compensating the estimator's group delay:
+
+- **onset** — the note's *rising edge* (first in-tune frame following an out-of-tune one) must be within **±50 ms** of the label.
+- **offset** — the note's *falling edge* must be within **±max(50 ms, 20% of note duration)** of the label.
+- **pitch (f0)** — ≥**80%** of the note's sustained frames must lie within **±25 cents** of the score pitch.
+- **also gated** — SNR floor, clipping, and per-voice license/consent.
+
+Per-sample verdict (`accepted` · `rejected` · `quarantined` · `flagged` · `license_refused`) is recorded in the manifest. Deterministic-lane labels are exact by construction; SVS labels are re-derived from the audio (`rederive`) and then passed through this same gate.
+
+## Quickstart
+
+Driven by [`just`](https://github.com/casey/just); every recipe runs through `uv` (Python 3.14), so a fresh checkout needs no manual setup. Prereqs: `just` and a C toolchain (`build-essential`, for the `pyworld` wheel).
+
+```bash
+just                    # list all recipes
+just smoke              # render the fixture corpus, then evaluate it end-to-end
+just run config=evals/fixtures/smoke.yaml   # render a corpus from a config
+just eval               # check against Success Criteria (non-zero on failure)
+just audit              # license/consent audit
+just stats              # aggregate corpus stats
+just splits             # source-stratified train/val splits
+```
+
+**Output** under `out/<run_id>/` (git-ignored, never committed): `corpus/` (accepted `wav`+`tsv`), `rejected/` (gated out, never train on it), `manifest.jsonl` (one row per attempted sample), `stats.json`, `config.resolved.yaml`.
+
+## Transcription model (Basic Pitch+)
+
+Extends Spotify's Basic Pitch for monophonic singing transcription (MML hackathon 2026).
+
+- **I/O** — 16 kHz audio, hop 256 → 62.5 fps; onset + frame (note) + contour heads over 127 MIDI pitches.
+- **Decode** — onsets by peak-picking; offsets by where the frame posterior crosses a threshold.
+- **Data** — trains on the rendered corpus (`Synthetic` dataset); validates on the held-out Klangio set (`external/MML26-singing-synthesis` submodule).
+- **Metrics** (mir_eval note-F1): `COn` (onset), `COnP` (+pitch), `COnOff` (+offset), `COnPOff` (all), `pitch_mse`.
+
+```bash
+just train                    # stage committed datasets -> train (val on Klangio), stream to W&B
+just train-synthetic          # A/B: train on synthetic-only data, still val on Klangio
+RELABEL=1 just train          # re-derive offset labels from audio during staging (repair-only)
+FRAME_WEIGHT=8 just train     # override the frame-head loss weight (default 16)
+just klangio-fifth N          # render the Nth fifth of the Klangio melodies into the training set
+```
+
+### Approaches tried (offset accuracy)
+
+Onsets/pitch were strong; **offsets** lagged. The wins, by category:
+
+- **Label quality**
+  - SVS labels re-derived from audio (`rederive` mode) instead of pinned to the rigid score grid (`force_score_f0`), via f0 DTW alignment anchored to the score timeline.
+  - Repair-only, validator-gated relabel during staging (`RELABEL=1`) — keeps already-valid labels byte-for-byte; one shared f0 pass; crash-safe (full corpus staged before any relabel).
+  - Synthetic-only training A/B (`just train-synthetic`) — the synthetic pools carry exact authored labels, while the `klangio_fifth_*` renders are built from machine transcriptions of unverified label accuracy. Earlier synthetic-only runs appeared to score higher, so this trains on the exact-label data only (val still on Klangio) to check whether the Klangio renders were dragging the scores down.
+- **Offset supervision & decoding**
+  - Offset-aware checkpoint selection (`COnPOff_f1`, was onset-only `COnP_f1`).
+  - Frame-head class-imbalance fix: `FRAME_WEIGHT` (default 16, was 2) — the low weight collapsed the frame head and pinned offsets at the threshold floor.
+  - Per-head loss weights; decoder offset-hangover rescaled to the frame rate (~128 ms); validator falling-edge offset measurement; keep note-tail chunks in the loader.
+
+Result on Klangio val: raising the frame weight moved `COnPOff_f1` ~+50% and `COnOff_f1` ~+14% while halving pitch error (metric definitions unchanged — same mir_eval matching/tolerances).
+
+### What didn't work
+
+- **SoulX-Singer (zero-shot SVS)** — sings far too freely (~330 ms median timing drift vs the score); the re-derived labels failed validation on every test render. Wired up but not used in the corpus.
+- **`force_score_f0` labels for neural SVS** — the voicebank's actual timing drifts from the rigid score grid (~39% of note offsets land >50 ms off the audio's real voicing end). This is what motivated the `rederive` relabel.
+- **`frame-weight 2` (old default)** — too low for the ~200:1 frame class imbalance, so the frame head collapsed and offsets pinned at the threshold floor. Replaced by `FRAME_WEIGHT=16`.
+- **Vocos neural vocoder** — the plain mel model isn't f0-conditioned, detunes past the validator's ±25-cent tolerance, and gets rejected (gate working as designed). Lesson recorded in code: realism needs an f0-conditioned vocoder (BigVGAN-f0 / NSF).
+
+### Training data volumes
+
+Minutes of audio per committed dataset (`datasets/<id>/`, 22,050 Hz mono):
+
+| Dataset | Minutes | Clips | Synthesis | Labels |
+|---|---|---|---|---|
+| `donor_pool` | 35 | 759 | WORLD + augmentations | exact (authored) |
+| `lyrics_pool` | 1.7 | 37 | nnsvs | `force_score_f0` |
+| `lyrics_pool_words` | 1.8 | 40 | nnsvs | `force_score_f0` |
+| `melody_pool` | 41 | 371 | nnsvs | `force_score_f0` |
+| `klangio_fifth_0..4` | 535 | 6,603 | nnsvs | Klangio transcription |
+| **total** | **~618** | **7,874** | | |
+
+- **`just train-synthetic`** (donor + lyrics + words + melody) ≈ **80 min** (~1.3 h); `RUN_IDS="donor_pool"` alone ≈ **35 min**.
+- **`just train`** (adds the five Klangio fifths; donor capped to 40 clips) ≈ **9 h**, ~99% Klangio.
+- Validation is the held-out Klangio set under `external/` — not counted above.
+
+## Consuming the corpus
+
+- **Layout** — train on `corpus/` only; each `*.wav` has a sibling `*.tsv` (`onset_s  offset_s  pitch_midi`, byte-identical to the driving score). Never train on `rejected/`.
+- **Provenance** — `manifest.jsonl`: one row per attempted sample (`sample_id`, `lane`, `voice_id`, `augmentation_profile`, `seed`, license/consent, `verdict`). `sample_id` encodes it: `score_<id>_singer_<voice>` + `_aug_<profile>` for variants.
+- **Splits** — `just splits` writes `splits.json` train/val lists stratified by source (lane/voice/aug profile), deterministic in `--seed`.
+- **Quality gate** — validator checks onset (50 ms), offset, and f0 (±25 cents over ≥80% of each note). `just basic-pitch-eval` scores the rendered audio with the downstream model, broken down by verdict and source.
+
+### Committed dataset archive
+
+Rendering is slow, so accepted audio is archived under `datasets/<run_id>/` as OGG/Vorbis (~17× smaller, Git LFS) with verbatim labels + manifest + stats.
+
+```bash
+just pack-corpus     # out/<id>/ -> datasets/<id>/ (then commit datasets/)
+just unpack-corpus   # datasets/<id>/ -> out/<id>/corpus/*.wav (float32)
+```
+
+OGG is lossy (audio not bit-exact); labels/provenance are exact. Only accepted audio is archived; the manifest still lists rejections.
+
+## Optional: lyrics (phonetic diversity)
+
+Opt-in; adds consonant/vowel variety the bare "ah" vowel lacks. Never a label. No `lyrics` block → byte-identical to the lyric-free pipeline. One syllable per note; only the **svs** lane articulates them.
 
 ```yaml
 lyrics:
   source: automatic     # vowel (default) | supplied | automatic | generated
-  inventory: en_cv      # automatic-source style: en_cv | scat
-  g2p_backend: espeak   # espeak (CPU rules, default) | neural (byte-level T5 on GPU)
-  languages: [en-us]    # spread phonetic coverage across these (e.g. de, fr-fr, es, ja, cmn, ko)
+  inventory: en_cv      # en_cv (neutral CV) | scat (jazz scat syllables)
+  g2p_backend: espeak   # espeak (CPU, default) | neural (byT5 on GPU)
+  languages: [en-us]    # spread coverage; one picked per sample, seeded
 ```
 
-**Multilingual coverage:** set `languages:` to span the languages your evaluation set covers — one is
-chosen per sample (seeded) and recorded as `lyric_language` in the manifest/stats. Per-language G2P
-(espeak, ~100 languages; or the neural byT5) gives authentic per-language phonemes; on the same
-inventory, the 12-language EU+CJK set yields ~2.7× the distinct phonemes of English alone. The
-`generated` LLM source writes real words *in each language* (native script for CJK), and the nnsvs
-`yoko` voicebank covers Japanese natively. Example: `evals/fixtures/lyrics-multilingual.yaml`.
+**Sources** — two of them *create* lyrics:
 
-- **vowel** — default, lyric-free (open vowel).
-- **supplied** — per-note syllables carried in an optional 4th `.tsv` column (taken as authored).
-- **automatic** — a seeded, CPU, dependency-free syllable sampler. `inventory: en_cv` for neutral
-  consonant–vowel syllables, or **`inventory: scat`** for jazz **scat-singing** syllables
-  (Scatman-style "ski-ba-bop-ba-dop-bop"). Deterministic from the master seed, reproducible.
-- **generated** — themed lyrics from a real instruct **LLM** (default `Qwen2.5-0.5B-Instruct`,
-  Apache-2.0) run on GPU, segmented to one syllable per note and pinned as a cached artifact so
-  replays never re-invoke the model; an unverified model license is refused.
+- **vowel** — default, lyric-free.
+- **supplied** — per-note syllables in an optional 4th TSV column (author-provided).
+- **automatic** — seeded CPU syllable sampler; draws singable syllables from a checked-in inventory (`en_cv` / `scat`). Deterministic, dependency-free.
+- **generated** — an instruct LLM (`Qwen2.5-0.5B-Instruct`, GPU) writes themed real words, segmented to one syllable per note. Unverified model licenses are refused.
 
-Every source assigns **one syllable per note**. Only the **svs** lane articulates the syllables as
-phonemes (vowel-specific formants + consonant bursts at the score-derived pitch); the deterministic
-and voice-conversion lanes are unchanged. Articulation needs grapheme-to-phoneme (G2P):
+**Pipeline:** `per-note syllables → G2P (espeak | byT5) → vowel-on-the-beat placement → svs lane sings them → alignment validator`. The vowel nucleus carries the pitch from the note onset; consonants sit in short pre-onset/pre-offset windows, so the *labelled* onset stays on the beat — the alignment risk the validator then checks.
+
+**Reproducibility:** `automatic` reproduces from the seed. `generated` is **pinned to a cache artifact** — the (non-deterministic) LLM runs once per `(theme, model, score, seed, n_notes)`, its text is written to `out/<run>/lyrics/<key>.jsonl`, and every replay reuses that file with no model call. So a generated corpus replays byte-identically from the pinned text; the model only ever fills an empty cache.
 
 ```bash
-sudo apt install espeak-ng        # CPU rule-based G2P (default)
-uv sync --extra lyrics            # phonemizer (lazy; CPU baseline unaffected)
-# Optional GPU upgrades:
-uv sync --extra lyrics --extra gpu --extra lyrics-gpu   # neural G2P + LLM generation on GPU
+sudo apt install espeak-ng && uv sync --extra lyrics   # CPU G2P
+just run config=evals/fixtures/lyrics-svs.yaml         # svs lane articulates syllables
+uv run pytest -m gpu                                   # opt-in GPU paths (LLM / neural G2P)
 ```
 
-```bash
-just run config=evals/fixtures/lyrics-smoke.yaml   # automatic en_cv syllables (CPU)
-just run config=evals/fixtures/lyrics-scat.yaml    # scat-singing style
-just run config=evals/fixtures/lyrics-svs.yaml     # svs lane articulates the syllables (espeak G2P)
-```
+## Optional: score-domain augmentations
 
-GPU paths (real LLM generation, neural G2P) have opt-in tests: with the gpu extras synced, run
-`uv run pytest -m gpu`. The default suite stays CPU-only so the no-GPU baseline guarantees hold.
-### Accompaniment stage (spec 002)
-
-An optional post-acceptance stage lays instrumental backing under an accepted vocal **without moving
-the sung-note timing**, so the score still labels the result. Two modes: **lego** (vocal-preserving —
-a generated accompaniment "stem" summed under the untouched vocal; the vocal stays bit-exact and the
-stem is kept for re-mixing) and **complete** (one-pass full mix, mild vocal coloration). Admission is
-decided on the final mix. Enable it via the `accompaniment` lane in a run config. The CPU **fake** backend runs in CI:
-
-```bash
-uv run voders run  --config evals/fixtures/accompaniment-smoke.yaml   # fake backend, no GPU
-uv run voders eval --manifest out/accompaniment_smoke/manifest.jsonl  # SC-001/002/004/005/008
-```
-
-The real **ACE-Step** backend (`ACE-Step/ACE-Step-v1-3.5B`, Apache-2.0) runs on GPU. It can't share
-this project's environment (conflicting pins, no Python 3.14 / aarch64 wheels), so — like the SVS /
-RVC / Seed-VC backends — it lives as a standalone uv project under `backends/acestep/` and is invoked
-out-of-process. Set it up and run an end-to-end demo with the task runner:
-
-```bash
-just setup-acestep-backend   # uv sync --project backends/acestep
-just setup-accomp            # Demucs for Lego separation (uv sync --extra cpu --extra accomp)
-just demo-acestep            # real ACE-Step accompaniment on a fixture vocal, then eval
-```
-
-See `specs/002-vocal-conditioned-accompaniment/quickstart.md`.
-
-## Quickstart
-
-Everything is driven by a [`just`](https://github.com/casey/just) task runner; each action goes
-through uv under the hood (Python 3.14), so a fresh checkout needs no manual setup — every action
-depends on `setup` (`uv sync`, a fast no-op when already current). Run `just` to list all actions.
-
-Prerequisites: `just` (`sudo apt install just`) and, to build the `pyworld` wheel, a C/C++
-toolchain (`sudo apt install build-essential`).
-
-```bash
-just                                   # list all actions
-just smoke                             # render the fixture corpus, then evaluate it (end-to-end)
-just run config=evals/fixtures/smoke.yaml   # render a corpus from a run config
-just eval                              # evaluate against the Success Criteria (non-zero on failure)
-just audit                             # license/consent audit
-just stats                             # aggregate corpus statistics
-just splits                            # source-stratified train/val splits (issue #7)
-```
-
-`just run` writes under `out/<run_id>/`: `config.resolved.yaml` (the resolved end-result record),
-`manifest.jsonl` (one provenance row per attempted sample), `stats.json`, `corpus/` (accepted
-`wav`+`tsv` pairs), `rejected/` (non-accepted samples, never trained on), and `checkpoints/`. The
-`out/` tree is git-ignored — generated corpora are never committed.
-
-## Score-domain augmentations (optional)
-
-An optional, opt-in pre-render stage fans out *score variants* from each base score along three axes
-before anything renders — **transpose** (semitone/octave pitch shift), **humanize_time** (seeded
-onset/duration jitter), and **volume** (seeded per-note gain). Because a variant is just another
-input score flowing through the whole pipeline, its labels are correct by construction. The feature
-is **off by default**: with no `score_augmentation` block a run is byte-identical to before, and no
-`corpus/augmented/` directory appears.
+Opt-in pre-render stage; fans out score *variants* (labels still correct by construction). Off by default. Variants go to a separate `corpus/augmented/<axis>/` subtree; `score_id` encodes the transform (e.g. `score_000__t+12`).
 
 ```yaml
-score_augmentation:                # default [] when absent — feature off
+score_augmentation:
   - profile_id: all-axes
-    transpose:      { offsets: [-12, 12], policy: drop, window: [0, 127] }
-    humanize_time:  { onset_sigma_s: 0.02, duration_sigma_s: 0.02, max_dev_s: 0.05, draws: 2 }
-    volume:         { gain_db_range: [-6.0, 6.0], distribution: uniform }
+    transpose:     { offsets: [-12, 12], policy: drop, window: [0, 127] }
+    humanize_time: { onset_sigma_s: 0.02, duration_sigma_s: 0.02, max_dev_s: 0.05, draws: 2 }
+    volume:        { gain_db_range: [-6.0, 6.0], distribution: uniform }
 ```
 
-Variants are written to a distinct `corpus/augmented/<axis>/` (and `rejected/augmented/<axis>/`)
-subtree — never co-mingled with the originals in `corpus/` — and each variant's `score_id` encodes
-its base score and applied transform (e.g. `score_000__t+12`), so every file is self-describing.
-Evaluate a run against this feature's Success Criteria with:
+## Optional: accompaniment (spec 002)
+
+Lays instrumental backing under an accepted vocal **without moving sung-note timing**, so the score still labels the mix.
+
+- **lego** — generated stem summed under a bit-exact vocal (stem kept for re-mixing).
+- **complete** — one-pass full mix, mild vocal coloration.
+- Backends: **fake** (CPU/CI) and **ACE-Step** (`ACE-Step-v1-3.5B`, GPU, out-of-process).
 
 ```bash
-uv run voders run --config evals/fixtures/score-aug-smoke.yaml
-uv run voders eval --manifest out/score-aug-smoke/manifest.jsonl --suite score_aug
+just demo-acestep   # real ACE-Step accompaniment on a fixture vocal, then eval
 ```
-## Consuming the corpus (for training)
 
-If you're training a transcription model on the output, here's what you need:
+## Donor voices (data sources)
 
-**Layout.** Train on `corpus/` only — `corpus/**/*.wav` each has a sibling `.tsv` (the label,
-byte-identical to the driving score: `onset_s  offset_s  pitch_midi`). `rejected/` holds samples the
-validator gated out; never train on it. Audio is 22,050 Hz mono float32.
+Permissive, consented vowel sources for the deterministic/VC lanes; all land git-ignored under `models/donors/`.
 
-**Provenance.** `manifest.jsonl` is one JSON row per attempted sample with its `sample_id`,
-`lane`, `voice_id`, `augmentation_profile`, `seed`, license/consent, and the `verdict`. `stats.json`
-summarises totals, unique scores/voices, timbre identities, and pitch/duration distributions.
+- `just download-donors` — VocalSet + VCTK (CC BY 4.0).
+- `just download-freesound` — short sung vowels (CC0 default; set `FREESOUND_API_TOKEN`).
+- `just record-donor <id> RECORD=1` — capture + consent your own vowel from the mic.
+- `just list-donors` — show enrolled donors with license/attribution.
+- `just augment` — enroll all sources → unified pool → render → augment → audit → eval → stats (what the `data-augmentation` Action runs).
 
-**Splits.** `just splits` (`voders splits`) writes `splits.json` with train/val lists
-**stratified by source** (lane/voice/augmentation profile) and deterministic in `--seed`, so every
-generator is represented on both sides and you can attribute errors to specific sources.
+## GPU & out-of-process backends
 
-**Quality — what to expect.** The validator gates every sample on onset (50 ms), offset, and f0
-(±25 cents over ≥80% of each note), so labels are correct by construction. Against the actual
-downstream model, `just basic-pitch-eval` runs **Basic Pitch** on the rendered audio and scores
-note-F1 (COnP: onset 50 ms, pitch 50 cents) vs the labels, broken down by verdict status and by
-source. Measured on the fixtures (small n — directional, re-run at scale): accepted lanes **0.80–1.00**
-(NNSVS 1.0, synthetic donor 0.94, VocalSet donor 0.87, RVC 0.80); rejected samples **~0.48–0.57**.
-So the gate is a genuine quality filter; the ±25-cent threshold is calibrated against the consumer
-(see `research.md` Decision 9). Use `basic-pitch-eval`'s per-source breakdown to spot weak generators.
-
-## Running tests / development
+- `just setup-gpu` — torch/torchaudio/torchcrepe (Python 3.14 wheels; verified on NVIDIA GB10).
+- `just smoke-gpu` — validate pitch with CREPE (neural f0) instead of CPU `pyin`. Config: `validator.f0_method: crepe_f0`, `f0_device: auto` (probes `cuda → xpu → dml → cpu`).
+- **Out-of-process backends** — toolkits whose deps conflict with the 3.14 core live as standalone uv projects under `backends/` (own `pyproject.toml` / `.python-version` / `uv.lock`); the core calls them via `uv run --project` exchanging a JSON request + WAV. Examples: `backends/svs` (nnsvs, Py 3.11), `backends/soulx` (SoulX-Singer), `backends/acestep`, RVC (Py 3.10, `fairseq`).
 
 ```bash
-just test            # full test suite
-just lint            # ruff check + ruff format --check + mypy (zero-warning gate)
-just fmt             # auto-format
-just bench           # deterministic-lane throughput vs the SC-005 floor
-just check           # lint + test (what CI runs)
+just demo-svs-nnsvs   # svs lane via the out-of-process NNSVS backend
+just demo-rvc         # voice conversion (RVC)
+just demo-seedvc      # zero-shot VC (Seed-VC, reference clip, no per-voice .pth)
 ```
 
-## GPU and neural backends
+## Develop
 
 ```bash
-just setup-gpu            # add the gpu extra (torch / torchaudio / torchcrepe)
-just smoke-gpu           # render, then validate with CREPE (neural f0) on the GPU
-just download-rvc-models # fetch the RVC base model weights into models/ (git-ignored)
-just demo-svs-nnsvs      # run the SVS lane via its out-of-process NNSVS backend
+just test     # full test suite (CPU; GPU paths behind -m gpu)
+just lint     # ruff check + ruff format --check + mypy (zero-warning gate)
+just fmt      # auto-format
+just bench    # deterministic-lane throughput vs the SC-005 floor
+just check    # lint + test (what CI runs)
 ```
 
-`just setup-gpu` installs torch/torchaudio/torchcrepe (Python 3.14 wheels; verified on an NVIDIA
-GB10). **Validator on GPU:** a run config with `validator.f0_method: crepe_f0` measures pitch with
-CREPE — a neural f0 (fundamental-frequency) estimator — on the GPU instead of the CPU `pyin`
-fallback; `just smoke-gpu` demonstrates it. The CPU default stays `pyin_f0` so the baseline needs
-no GPU (FR-009).
-
-`validator.f0_device` selects the accelerator: `auto` probes `cuda → xpu → dml → cpu`. NVIDIA
-(`cuda`) is verified here; **Intel/AMD GPUs** are wired to their documented APIs — Intel XPU
-(`intel-extension-for-pytorch`) or DirectML on Windows (`uv pip install torch-directml`, then
-`f0_device: dml`). Without a matching accelerator it falls back to CPU (so CREPE still runs, just
-unaccelerated). CUDA is NVIDIA-only, so an Intel integrated GPU uses `xpu`/`dml`, not `cuda`.
-
-**Out-of-process backends.** Lane toolkits whose dependency chains conflict with the 3.14 core live
-in their own uv projects under `backends/` (own `pyproject.toml` / `.python-version` / `uv.lock`).
-The core invokes them with `uv run --project backends/<name>` and exchanges a JSON request plus a
-WAV, so the incompatible chains never share an interpreter. `backends/svs` runs NNSVS on Python
-3.11 (`just demo-svs-nnsvs`).
-
-```mermaid
-flowchart LR
-    subgraph core["uv project · Python 3.14 (CPU core)"]
-        O["orchestrator + validator"]
-    end
-    subgraph svs["backends/svs · uv project · Python 3.11"]
-        W["NNSVS worker"]
-    end
-    O -- "uv run --project (JSON request)" --> W
-    W -- "WAV out" --> O
-```
-
-**Real donor voices.** `just download-donors` streams one consented sample each from **VocalSet**
-and **VCTK** (both CC BY 4.0) into git-ignored `models/donors/`; `just demo-real-donor` renders the
-deterministic lane with a real human vowel instead of the synthetic fixture.
-
-**Record your own donor vowel.** `just record-donor <voice-id> FILE=take.wav` imports an existing
-WAV, or `just record-donor <voice-id> RECORD=1` captures a sustained vowel from the microphone (the
-`record` extra pulls in `sounddevice`). Either way it isolates the steady portion, normalizes,
-resamples to 22,050 Hz mono float32, validates the take (voiced, low noise), prompts for your
-consent, writes the WAV under git-ignored `models/donors/`, and prints a ready-to-paste `Voice`
-entry (`kind: deterministic_donor`, `consent_verified: true`). Because you record and consent
-yourself, the consent gate (FR-011, SC-008) is satisfied by construction — one ~3 s vowel is enough
-for the WORLD/RVC base render. Paste the printed entry under `voices:` in your run config.
-
-**Fetch permissive donor vowels from Freesound.** `just download-freesound` searches
-[Freesound](https://freesound.org) for short sung/sustained vowels under a permissive license (CC0
-by default — no attribution required), downloads the HQ preview, resamples to 22,050 Hz mono float32,
-rejects clips that aren't clearly voiced, and writes donor WAVs under git-ignored
-`models/donors/freesound/`. Set `FREESOUND_API_TOKEN` first (get one at
-<https://freesound.org/apiv2/apply/>). Tune the search with
-`just download-freesound QUERY="sung vowel" COUNT=5 LICENSE=cc0` (use `LICENSE=by` for CC BY, whose
-attribution is recorded in `ATTRIBUTION.txt`). Each fetched sound prints a ready-to-paste `Voice`
-entry. Run `just list-donors` to see everything fetched/enrolled under `models/donors/` with its
-license and attribution.
-
-### Unified data-augmentation pipeline
-
-The donor enrollment methods above are the *data sources*; `just augment` runs them all into one
-augmented corpus. It is what the `data-augmentation` GitHub Action runs (manual dispatch or on a
-published release).
-
-```bash
-just augment                 # all sources -> unified pool -> render -> augment -> audit -> eval -> stats
-just augment FREESOUND_COUNT=10   # fetch more Freesound donors this run
-just build-pool              # only (re)generate the pool config from donors on disk
-just train                   # stub: trains on the augmented corpus manifest (wire in a real trainer)
-```
-
-**Every data source is used.** `augment` enrolls donors from all four methods —
-synthetic fixtures (`evals/fixtures/voices/`), VocalSet/VCTK (`just download-donors`), Freesound
-(`just download-freesound`), and any mic recordings (`just record-donor`) already on disk — then
-`evals/build_donor_pool.py` discovers every one of them and writes a single unified run config,
-`evals/fixtures/donor_pool.yaml` (committed for review; regenerated each run so newly fetched/recorded
-donors join automatically). The fetch steps are best-effort, so the pipeline still runs offline on
-the checked-in donors. `just list-donors` prints the current pool with licenses/attribution.
-
-**Which synthesis methods run.** voders routes each voice to a lane by its `kind`
-(`src/voders/corpus/orchestrator.py`), so the donor-vowel pool (`kind: deterministic_donor`) is sung
-by the **deterministic (WORLD)** lane, and every accepted base render is then fanned through the
-label-preserving **augmentation** profiles (`room_reverb`, `phone_codec`, `noisy_room`) — that is the
-augmentation multiplier (FR-005). The **svs** (NNSVS) and **voice_conversion** (RVC) lanes consume
-voices of kind `svs_voicebank` / `voice_conversion` plus their own out-of-process backends and
-consented models, so they are exercised by the dedicated `just demo-svs-nnsvs`, `just demo-rvc`, and
-`just demo-seedvc` recipes rather than the donor-vowel pool (a donor vowel can serve as a Seed-VC
-*reference*, which `demo-seedvc` shows).
-
-**Where the augmented data is output.** `just augment` writes everything under **`out/donor_pool/`**
-(git-ignored — generated corpora are never committed):
-
-| Path | Contents |
-| --- | --- |
-| `out/donor_pool/corpus/` | accepted samples — paired `*.wav` (22,050 Hz mono float32) + `*.tsv` labels; **this is the augmented training set** |
-| `out/donor_pool/manifest.jsonl` | one provenance row per attempted sample (lane, voice, seed, license, augmentation profile, verdict) — what `just train` consumes |
-| `out/donor_pool/rejected/` | samples that failed the validator (quarantined, never trained on) |
-| `out/donor_pool/stats.json` | aggregate stats (counts, timbre identities, augmentation coverage, pitch/duration distributions) |
-| `out/donor_pool/config.resolved.yaml` | the resolved run config (hashed into the manifest for replay) |
-
-**Committed OGG archive (skip regeneration).** Rendering the corpus takes a while, so the accepted
-audio is also archived under **`datasets/donor_pool/`** as OGG/Vorbis (~17× smaller than float32 WAV;
-versioned via Git LFS), alongside the verbatim `*.tsv` labels, `manifest.jsonl`, `stats.json`, and
-`config.resolved.yaml`. `just pack-corpus` builds the archive from `out/donor_pool/` (run it after
-`just augment`, then commit `datasets/`); `just unpack-corpus` decompresses it back to WAV at the
-exact `out/donor_pool/corpus/.../*.wav` paths the renderer uses. `just train` auto-unpacks when the
-corpus isn't already rendered, so training needs no regeneration. OGG is lossy, so a round-trip is
-not bit-exact (use `just augment` for bit-exact reproduction); the labels and provenance are exact.
-
-How `datasets/donor_pool/` is organised:
-
-```
-datasets/donor_pool/
-├── corpus/
-│   └── shard=000/                         # samples are sharded (one shard here; more at scale)
-│       ├── <sample_id>.ogg                # accepted audio, OGG/Vorbis (Git LFS), 22,050 Hz mono
-│       └── <sample_id>.tsv                # label: TSV rows of `onset_s  offset_s  pitch_midi`
-├── manifest.jsonl                         # one JSON row per ATTEMPTED sample (accepted + rejected)
-├── stats.json                             # aggregate stats for the run
-└── config.resolved.yaml                   # resolved run config (hashed into the manifest for replay)
-```
-
-- **`sample_id`** encodes provenance: `score_<id>_singer_<voice_id>` for a base render, with
-  `_aug_<profile>` appended for an augmented variant (e.g.
-  `score_000_singer_donor_ah_synth_aug_room_reverb`). Each `.ogg` has a sibling `.tsv` with the same
-  stem — that pair `(audio, label)` is one training example.
-- **Only accepted audio is archived.** `manifest.jsonl` still lists every attempted sample (so you
-  can audit rejections), but rejected audio is not stored — its rows point at `rejected/` paths that
-  `unpack` does not create. Filter the manifest to `verdict.status == "accepted"` (or just walk
-  `corpus/`) when training.
-- **`unpack` mirrors this tree** into `out/donor_pool/`, turning each `corpus/**/<id>.ogg` into
-  `out/donor_pool/corpus/**/<id>.wav` (float32) and copying the labels + `manifest.jsonl` +
-  `stats.json` + `config.resolved.yaml` verbatim, so the manifest's relative `audio_path` /
-  `score_path` resolve unchanged.
-
-**Zero-shot voice conversion (modern, no per-voice training).** `just demo-seedvc` runs **Seed-VC**
-(diffusion zero-shot VC) out-of-process (`backends/seedvc`, Python 3.10): the target voice is just a
-reference clip (a consented donor), no `.pth`. It keeps the source pitch (`--f0-condition`), so the
-labels are preserved. Other modern methods in scope (research.md Decision 8): kNN-VC, BigVGAN/Vocos
-vocoders, DiffSinger/TCSinger SVS.
-
-**Neural vocoder (experimental).** The deterministic lane accepts `vocoder: vocos` to re-vocode the
-WORLD output through Vocos (`just demo-vocos`). Empirically the plain mel Vocos model is not
-f0-conditioned and detunes past the ±25-cent tolerance, so the alignment gate rejects it — the
-gate working as designed. The lesson recorded in the code: an **f0-conditioned** vocoder
-(BigVGAN-f0 / NSF) is the alignment-safe route to neural-vocoder realism.
-
-**Trained voice models need consented weights.** RVC needs a *trained voice model* for a specific
-singer (an RVC `.pth`) — large external assets, and exactly what the consent gate (FR-011, SC-008)
-governs, so the repo bundles none. `just download-rvc-models` fetches the RVC **base** models
-(HuBERT + RMVPE feature extractors — not a cloned voice). For a *consented* target singer, `just download-rvc-voice` fetches an
-Apache-2.0-licensed RVC model trained on **VCTK** speaker p231 (the VCTK dataset is CC BY 4.0; its
-speakers consented to open release) — a license-clean alternative to scraped celebrity clones. Point
-a voice's `model_ref` at `models/rvc/voices/Fp231rmvpe.pth` and use `backend: rvc`.
-
-Running RVC needs its backend project synced (`just setup-rvc-backend`); it pins **Python 3.10**
-because RVC's HuBERT extractor pulls in `fairseq`, which Python 3.11+ rejects — isolating that in
-its own uv project is why the 3.14 core is unaffected. The CPU backends (`backend: world` /
-`backend: cpu`) reproduce each lane's contract without a GPU or external weights, so the whole
-pipeline and its evaluation run on a laptop.
-
-## Reproducibility
-
-A single run-level `master_seed` derives every per-sample seed, so any one sample reproduces in
-isolation from the manifest plus the source scores. The deterministic and voice-conversion lanes
-reproduce bit-for-bit; the neural lanes reproduce to within the validator's tolerances.
+Built spec-first: each feature is a numbered `specs/NNN-*/` folder (`spec → research → plan → data-model → contracts → quickstart → tasks`) under a constitution (`.specify/memory/constitution.md`) — TDD, zero-warning lint, docs-current, evaluation-first.
