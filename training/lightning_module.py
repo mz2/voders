@@ -37,6 +37,9 @@ class LightningModuleSingingVoice(pl.LightningModule):
             optimizer_type="adam",
             onset_weight: float = 1.0,
             frame_weight: float = 1.0,
+            onset_loss_weight: float = 1.0,
+            frame_loss_weight: float = 1.0,
+            contour_loss_weight: float = 1.0,
             chunk_duration_s: float = 8.0,
             context_duration_s: float = 2.0,
             batch_size_inference: int = 8,
@@ -55,6 +58,9 @@ class LightningModuleSingingVoice(pl.LightningModule):
             "optimizer_type",
             "onset_weight",
             "frame_weight",
+            "onset_loss_weight",
+            "frame_loss_weight",
+            "contour_loss_weight",
             "chunk_duration_s",
             "context_duration_s",
             "batch_size_inference",
@@ -82,6 +88,16 @@ class LightningModuleSingingVoice(pl.LightningModule):
         self._nsys_capture_started = False
         self._nsys_capture_complete = False
         self.prediction_type = "oaf"
+
+        # Per-head loss-weight scalars applied to the summed training loss. These are distinct
+        # from onset_weight/frame_weight, which only set the BCE positive-class pos_weight: those
+        # rebalance positive vs negative frames *within* a head, but cannot change a head's weight
+        # *relative to the others*. Without these, training_step summed onset + frame + contour with
+        # equal weight, so the frame head (which alone determines offsets) could not be emphasised.
+        # Defaults of 1.0 reproduce the previous equal-weight behaviour exactly.
+        self.onset_loss_weight = onset_loss_weight
+        self.frame_loss_weight = frame_loss_weight
+        self.contour_loss_weight = contour_loss_weight
 
         self.frame_loss = nn.BCEWithLogitsLoss(
             pos_weight=torch.tensor(frame_weight)
@@ -427,6 +443,11 @@ class LightningModuleSingingVoice(pl.LightningModule):
         loss_dict["contour"] = contour_loss
         for loss_key, loss_value in loss_dict.items():
             self.log(f"train/{loss_key}", loss_value, prog_bar=True, on_step=True, on_epoch=False)
+        head_loss_weights = {
+            "onset": self.onset_loss_weight,
+            "frame": self.frame_loss_weight,
+            "contour": self.contour_loss_weight,
+        }
         next_optimizer_step = int(self.global_step) + 1
         should_log_media = (
             self.media_log_interval_steps > 0
@@ -436,7 +457,7 @@ class LightningModuleSingingVoice(pl.LightningModule):
         if should_log_media:
             self._log_training_media(batch, model_outputs, next_optimizer_step)
             self._last_media_log_step = next_optimizer_step
-        return sum(loss_dict.values())
+        return sum(head_loss_weights.get(k, 1.0) * v for k, v in loss_dict.items())
 
     def on_validation_epoch_start(self) -> None:
         self.examples_validation = []
