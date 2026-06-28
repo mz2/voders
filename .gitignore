@@ -250,4 +250,7 @@ out/klangio_*
 
 # SoulX-Singer is cloned at runtime (repo + GB-scale weights); never commit it
 backends/soulx/SoulX-Singer/
+
+# Metadata-only score materialisation for SoulX x ACE-Opencpop dataset generation.
+generated/ace_opencpop_scores/
 backends/*/.venv/

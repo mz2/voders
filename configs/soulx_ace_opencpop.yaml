@@ -1,0 +1,37 @@
+# Render metadata-only ACE-Opencpop scores with SoulX-Singer.  See docs/soulx-ace-opencpop.md.
+run_id: soulx_ace_opencpop
+master_seed: 20260628
+scores: generated/ace_opencpop_scores/train/*.tsv
+output_root: out/soulx_ace_opencpop
+
+voices:
+  - voice_id: soulx_mandarin
+    kind: svs_voicebank
+    license: "SoulX-Singer Apache-2.0 (bundled Mandarin prompt)"
+    consent_verified: true
+    model_ref: Soul-AILab/SoulX-Singer
+
+lanes:
+  svs:
+    enabled: true
+    backend: soulx
+    # SoulX is expressive and does not preserve the rigid input grid exactly.  Re-derive labels
+    # from rendered f0, then let the validator reject any audio/label pair it cannot verify.
+    mode: rederive
+
+lyrics:
+  source: automatic
+  inventory: zh_cv
+  languages: [cmn]
+
+validator:
+  onset_ms: 50
+  offset_min_ms: 150
+  offset_fraction: 0.5
+  min_note_ms: null
+  min_note_percentile: 1
+  f0_cents: 25
+  f0_coverage: 0.75
+  snr_floor_db: 0
+  f0_method: auto
+  f0_device: auto

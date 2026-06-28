@@ -80,3 +80,10 @@ def test_sampler_handles_empty_and_short_scores() -> None:
     assert sample_syllables(0, 123, inventory) == []
     one = sample_syllables(1, 123, inventory)
     assert len(one) == 1 and one[0] in set(inventory)
+
+
+def test_mandarin_inventory_is_single_character_and_distinct() -> None:
+    inventory = load_inventory("zh_cv")
+    assert len(inventory) >= 64
+    assert len(set(inventory)) == len(inventory)
+    assert all(len(syllable) == 1 and "\u4e00" <= syllable <= "\u9fff" for syllable in inventory)
