@@ -72,11 +72,21 @@ def align_score_to_f0(
             i -= 1
         j -= 1
 
-    onset_frame: list[int | None] = [None] * n
+    # Each note's onset is the first frame the DTW assigns to it that is actually VOICED and on its
+    # pitch (within a semitone) — i.e. where the note's pitch begins, matching the validator's
+    # rising-edge onset. Falling back to the first assigned frame (or a neighbour) only if none.
+    note_frames: list[list[int]] = [[] for _ in range(n)]
     for jj, a in enumerate(assign):
-        if onset_frame[a] is None:
-            onset_frame[a] = jj
-    # Fill any note that got no frame by interpolating between its neighbours.
+        note_frames[a].append(jj)
+    onset_frame: list[int | None] = [None] * n
+    for i in range(n):
+        on_pitch = [
+            j for j in note_frames[i] if voiced[j] and abs(frame_midi[j] - pitches[i]) <= 1.0
+        ]
+        if on_pitch:
+            onset_frame[i] = on_pitch[0]
+        elif note_frames[i]:
+            onset_frame[i] = note_frames[i][0]
     for i in range(n):
         if onset_frame[i] is None:
             onset_frame[i] = onset_frame[i - 1] if i > 0 else 0
