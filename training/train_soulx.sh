@@ -4,7 +4,7 @@ set -euo pipefail
 
 exec uv run --no-sync python -m training.train \
     --train-dataset Synthetic \
-    --train-path out/donor_pool/corpus \
+    --train-path syntheticdataset_soulx \
     --val-dataset Klangio \
     --sequence-length 8 \
     --batch-size 32 \

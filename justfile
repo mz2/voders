@@ -130,7 +130,7 @@ klangio-fifth N SHARDS="6": setup
 # join automatically as each `just klangio-fifth N` completes. Use `donor_pool` (no cap) for all of it.
 train RUN_IDS="donor_pool:40 lyrics_pool lyrics_pool_words klangio_fifth_0 klangio_fifth_1 klangio_fifth_2 klangio_fifth_3 klangio_fifth_4":
     uv sync --extra cpu --extra gpu --extra training
-    uv run --extra cpu python evals/corpus_archive.py stage --run-ids {{RUN_IDS}} --out syntheticdataset_soulx
+    uv run --extra cpu python evals/corpus_archive.py stage --clean --run-ids {{RUN_IDS}} --out syntheticdataset_soulx
     bash training/train_soulx.sh
 
 # Run the full test suite.

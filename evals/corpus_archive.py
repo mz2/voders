@@ -87,14 +87,17 @@ def unpack(archive: Path, run_dir: Path) -> int:
     return 0
 
 
-def stage(run_ids: list[str], out_dir: Path) -> int:
+def stage(run_ids: list[str], out_dir: Path, *, clean: bool = False) -> int:
     """Assemble the trainer's flat input dir from committed datasets (OGG -> WAV).
 
     ``SyntheticDataset`` reads ``<out_dir>/<song>/{audio.wav,score.tsv}``, so every accepted sample
     from each ``datasets/<run_id>`` is decompressed into ``<out_dir>/<run_id>__<sample_id>/``. Pass
     several run ids to combine corpora (e.g. the deterministic ``donor_pool`` AND the lyric/SVS
-    ``lyrics_pool``) into one training set.
+    ``lyrics_pool``) into one training set. ``clean`` rebuilds ``out_dir`` from scratch so the
+    staged set is exactly ``run_ids`` (no stale samples from a previous run).
     """
+    if clean and out_dir.exists():
+        shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     total = 0
     for spec in run_ids:
@@ -120,6 +123,13 @@ def stage(run_ids: list[str], out_dir: Path) -> int:
             total += 1
         print(f"staged {n} songs from {rid}" + (f" (capped at {limit})" if limit else ""))
     print(f"staged {total} songs -> {out_dir}")
+    if total == 0:
+        print(
+            f"ERROR: staged 0 songs — none of {run_ids} resolved under datasets/. "
+            "Did you pack the datasets (and pull LFS)?",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
@@ -138,10 +148,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--out", default="syntheticdataset_soulx", help="flat training dir (stage mode)"
     )
+    parser.add_argument(
+        "--clean", action="store_true", help="rebuild the staging dir from scratch (stage mode)"
+    )
     args = parser.parse_args(argv)
 
     if args.mode == "stage":
-        return stage(args.run_ids, Path(args.out))
+        return stage(args.run_ids, Path(args.out), clean=args.clean)
 
     run_dir = Path(args.run_dir) if args.run_dir else REPO / "out" / args.run_id
     archive = Path(args.archive) if args.archive else REPO / "datasets" / args.run_id
