@@ -79,26 +79,43 @@ def align_score_to_f0(
     for jj, a in enumerate(assign):
         note_frames[a].append(jj)
     onset_frame: list[int | None] = [None] * n
+    offset_frame: list[int | None] = [None] * n
     for i in range(n):
         on_pitch = [
             j for j in note_frames[i] if voiced[j] and abs(frame_midi[j] - pitches[i]) <= 1.0
         ]
         if on_pitch:
             onset_frame[i] = on_pitch[0]
+            # Last voiced on-pitch frame = where THIS note's voicing actually ends.
+            offset_frame[i] = on_pitch[-1]
         elif note_frames[i]:
             onset_frame[i] = note_frames[i][0]
+            offset_frame[i] = note_frames[i][-1]
     for i in range(n):
         if onset_frame[i] is None:
             onset_frame[i] = onset_frame[i - 1] if i > 0 else 0
+
+    frame_dur = float(times[1] - times[0]) if m > 1 else 0.01
 
     rederived: list[Note] = []
     max_dev_ms = 0.0
     for i, note in enumerate(notes):
         onset = float(times[onset_frame[i]])  # type: ignore[index]
-        if i + 1 < n:
-            offset = float(times[onset_frame[i + 1]])  # type: ignore[index]
+        # Offset = the end of THIS note's own voicing (one frame past its last voiced on-pitch
+        # frame), NOT the next note's onset. Equating offset with the next onset (the previous
+        # behaviour) forced every note fully contiguous: rests, breaths and staccato gaps were
+        # absorbed into the preceding note, so the audio went silent while the label stayed
+        # "active" — training the model to hold notes on past their true end (systematically late
+        # offsets, hurting COnOff/COnPOff).
+        if offset_frame[i] is not None:
+            offset = float(times[offset_frame[i]]) + frame_dur  # type: ignore[index]
         else:
-            offset = float(times[-1]) + (times[1] - times[0] if m > 1 else 0.01)
+            offset = onset + max(0.02, note.duration_s * 0.5)
+        # Never run into the next note's onset (keep a valid monophonic, non-overlapping label).
+        if i + 1 < n and onset_frame[i + 1] is not None:
+            next_onset = float(times[onset_frame[i + 1]])  # type: ignore[index]
+            if next_onset > onset:
+                offset = min(offset, next_onset)
         if offset <= onset:  # guard degenerate spans
             offset = onset + max(0.02, note.duration_s * 0.5)
         rederived.append(Note(onset_s=round(onset, 3), offset_s=round(offset, 3),
